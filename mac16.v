@@ -15,9 +15,9 @@ module mac_16 (
     output reg [6143:0] latch_array_out
 );
     
-    reg [23:0] partial_sum_out [0:15];
-    wire [23:0] partial_sum_in [0:15];
-    reg [3:0] counter, counter_next;
+    wire [23:0] partial_sum_out [0:15];
+    reg [23:0] partial_sum_in [0:15];
+    reg [3:0] counter;
 
     genvar i;
     generate
@@ -25,50 +25,42 @@ module mac_16 (
             MAC_datapath mac_inst(
                 .clk(clk),
                 .rst_n(rst_n),
-                .a_vec(a_vec[i * 264  + 263 -: 264]),
+                .a_vec(a_vec[i * 264 + 263 -: 264]),
                 .b_vec(b_vec),
                 .is_int4_mode(is_int4_mode),
                 .is_int8_mode(is_int8_mode),
                 .is_vsq(is_vsq),
                 // .a_factor(a_factor[i]),
                 // .b_factor(b_factor[i]),
-                .partial_sum_in(partial_sum_out[i]),
-                .partial_sum_out(partial_sum_in[i])
+                .partial_sum_in(partial_sum_in[i]),
+                .partial_sum_out(partial_sum_out[i])
             );
         end
     endgenerate
 
+    integer j;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             counter <= 4'b0000;
+            for (j = 0; j < 16; j = j + 1) begin
+                partial_sum_in[j] <= 24'b0;
+            end
+            latch_array_out <= 6144'b0;
         end
         else begin
+            // Update counter
             if (counter == 4'b1111)
                 counter <= 4'b0000;
             else
                 counter <= counter + 1;
+            
+            // Save output from MAC units
+            for (j = 0; j < 16; j = j + 1) begin
+                latch_array_out[j * 384 + counter * 24 + 23 -: 24] <= partial_sum_out[j];
+                partial_sum_in[j] <= partial_sum_out[j]; // Feed back output to input for next cycle
+            end
         end
     end
-
-    integer j;
-    // always @(*) begin
-    //     if (!rst_n) begin     // reset 
-    //         for (j = 0; j < 16; j = j + 1) begin
-    //             partial_sum_out[j] = 24'b0;
-    //         end
-    //         latch_array_out = 6144'b0;
-    //     end
-    //     else if (!clk) begin    // neg clk latch
-    //         for (j = 0; j < 16; j = j + 1) begin
-    //             latch_array_out[j * 384 + counter * 24 + 23 -: 24] = partial_sum_in[j];
-    //         end
-    //     end
-    //     else if (clk) begin     // pos clk latch
-    //         for (j = 0; j < 16; j = j + 1) begin
-    //             partial_sum_out[j] = latch_array_out[j * 384 + counter * 24 + 23 -: 24];
-    //         end
-    //     end
-    // end
 
 endmodule
 

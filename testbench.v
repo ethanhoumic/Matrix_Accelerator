@@ -30,18 +30,17 @@ module tb;
     integer i, j, k;
     reg [263:0] a_buffer [0:2047];   // 16 banks 
     reg [263:0] b_buffer [0:2047];   // single bank
-    reg [383:0] output_buffer [0:15];
-    reg [3:0] error;
+    reg [383:0] output_buffer [0:2047];
+    reg [7:0] error;
+    reg [15:0] check_count;
 
     always #5 clk = ~clk;
 
     initial begin
-
         $fsdbDumpfile("simulation.fsdb");
         $fsdbDumpvars(0, tb);
 
         // Initialize signals
-
         clk = 0;
         rst_n = 0;
         is_int8_mode = 0;
@@ -49,42 +48,63 @@ module tb;
         is_vsq = 0;
         a_vec = 0;
         b_vec = 0;
+        error = 0;
+        check_count = 0;
 
+        // Read test vectors
         $readmemb(`PATTERN_A, a_buffer);
         $readmemb(`PATTERN_B, b_buffer);
         $readmemb(`PATTERN_OUTPUT, output_buffer);
 
-        #5;
+        // Reset sequence
+        #20;
         rst_n = 1;
+        #10;
         is_int8_mode = 1;
+        
+        // Load a_vec one time
+        for (k = 0; k < 16; k = k + 1) begin
+            a_vec[k * 264 + 263 -: 264] = a_buffer[k];
+        end
 
+        // Process each batch
         for (i = 0; i < 128; i = i + 1) begin
+            // Process 16 b vectors
             for (j = 0; j < 16; j = j + 1) begin
-                @(posedge clk) b_vec = b_buffer[i * 16 + j];
-                if (j == 0) begin
-                    for (k = 0; k < 16; k = k + 1) begin
-                        a_vec[k * 264 + 263 -: 264] = a_buffer[i * 16 + k];
-                    end
+                b_vec = b_buffer[i * 16 + j];
+                #10; // Wait for one clock cycle
+            end
+
+            // Allow MAC unit to complete additional cycles for accumulation
+            #80;
+            
+            // Verify results
+            $display("Checking batch %d", i);
+            for (k = 0; k < 16; k = k + 1) begin
+                if (latch_array_out[k * 384 +: 384] !== output_buffer[i*16+k]) begin
+                    error = error + 1;
+                    $display("Error at index %d: Expected %h, got %h", i*16+k, output_buffer[i*16+k], latch_array_out[k * 384 +: 384]);
+                end else begin
+                    check_count = check_count + 1;
+                    $display("Correct at index %d", i*16+k);
                 end
             end
-        end
-        
-        #100;
+            
+            // Reset for next batch
+            #10;
+            rst_n = 0;
+            #20;
+            rst_n = 1;
+            #10;
 
-        for (i = 0; i < 16; i = i + 1) begin
-            if (latch_array_out[i * 384 +: 384] !== output_buffer[i]) begin
-                error = error + 1;
-                $display("Error at index %d: Expected %b, got %b", i, output_buffer[i], latch_array_out[i * 384 +: 384]);
-            end else begin
-                $display("Correct at index %d: Expected %b, got %b", i, output_buffer[i], latch_array_out[i * 384 +: 384]);
+            // Load next batch of a vectors
+            for (k = 0; k < 16; k = k + 1) begin
+                a_vec[k * 264 + 263 -: 264] = a_buffer[(i+1) * 16 + k];
             end
         end
 
         #100;
-        
+        $display("Test completed with %d errors and %d correct checks", error, check_count);
         $finish;
-
     end
-
 endmodule
-
