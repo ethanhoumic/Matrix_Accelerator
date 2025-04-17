@@ -37,11 +37,12 @@ def simulate_mac_with_delay(a_buffer, b_buffer):
     for cycle in range(CYCLES):
         a_vectors = []
         for bank in range(BANKS):
-            bits = a_buffer[cycle * 16 + bank]
+            bits = a_buffer[cycle * BANKS + bank]
             a_vals = [int(bits[i * 8:(i + 1) * 8], 2) for i in range(ELEMENTS)]
             a_vectors.append(a_vals)
 
         for counter in range(COUNTER_MOD):
+            # 寫回上一拍的結果
             while pending_write_queue:
                 bank, delayed_counter, val = pending_write_queue.popleft()
                 latch_array[bank][delayed_counter] = val
@@ -55,6 +56,7 @@ def simulate_mac_with_delay(a_buffer, b_buffer):
                 result = (acc + dot) & 0xFFFFFF
                 pending_write_queue.append((bank, counter, result))
 
+    # 最後一批寫入
     while pending_write_queue:
         bank, delayed_counter, val = pending_write_queue.popleft()
         latch_array[bank][delayed_counter] = val
@@ -72,4 +74,4 @@ if __name__ == '__main__':
     b_buffer = read_input_file("b_sram_binary.txt")
     output_lines = simulate_mac_with_delay(a_buffer, b_buffer)
     write_output_file("output_sram_binary.txt", output_lines)
-    print("a_sram_binary.txt, b_sram_binary.txt 和 output_sram_binary.txt 已成功產生")
+    print("模擬完成，所有輸出已寫入 output_sram_binary.txt")

@@ -10,14 +10,16 @@ module mac_16 (
     input wire is_int8_mode,
     input wire is_int4_mode,
     input wire is_vsq,
-    // input wire [7:0] a_factor [0:15],
-    // input wire [7:0] b_factor [0:15],
     output reg [6143:0] latch_array_out
 );
 
     reg [23:0] partial_sum_out [0:15];
     wire [23:0] partial_sum_in [0:15];
-    reg [3:0] counter, counter_next;
+    reg [3:0] counter;
+
+    // 使用一級暫存器延遲 latch 寫入（模擬計算延遲）
+    reg [23:0] result_buffer [0:15];
+    reg        result_valid;
 
     genvar i;
     generate
@@ -25,54 +27,55 @@ module mac_16 (
             MAC_datapath mac_inst(
                 .clk(clk),
                 .rst_n(rst_n),
-                .a_vec(a_vec[i * 264  + 263 -: 264]),
+                .a_vec(a_vec[i * 264 + 263 -: 264]),
                 .b_vec(b_vec),
                 .is_int4_mode(is_int4_mode),
                 .is_int8_mode(is_int8_mode),
                 .is_vsq(is_vsq),
-                // .a_factor(a_factor[i]),
-                // .b_factor(b_factor[i]),
                 .partial_sum_in(partial_sum_out[i]),
                 .partial_sum_out(partial_sum_in[i])
             );
         end
     endgenerate
 
+    // Counter 控制：每 16 拍循環一次
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            counter <= 4'b0000;
-        end
-        else begin
-            if (counter == 4'b1111)
-                counter <= 4'b0000;
-            else
-                counter <= counter + 1;
-        end
+        if (!rst_n)
+            counter <= 0;
+        else
+            counter <= counter + 1;
     end
 
     integer j;
-    always @(*) begin
-        if (!rst_n) begin     // reset 
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
             for (j = 0; j < 16; j = j + 1) begin
-                partial_sum_out[j] = 24'b0;
+                partial_sum_out[j] <= 24'b0;
+                result_buffer[j] <= 24'b0;
             end
-            latch_array_out = 6144'b0;
-        end
-        else if (!clk) begin    // neg clk latch
+            latch_array_out <= 6144'b0;
+            result_valid <= 0;
+        end else begin
+            // 將上拍的 MAC 結果寫入 latch_array_out（延遲一拍）
+            if (result_valid) begin
+                for (j = 0; j < 16; j = j + 1) begin
+                    latch_array_out[j * 384 + counter * 24 +: 24] <= result_buffer[j];
+                end
+            end
+
+            // 更新 partial_sum_out（從 latch array 取出資料）
             for (j = 0; j < 16; j = j + 1) begin
-                latch_array_out[j * 384 + counter * 24 + 23 -: 24] = partial_sum_in[j];
+                partial_sum_out[j] <= latch_array_out[j * 384 + counter * 24 +: 24];
+                result_buffer[j]   <= partial_sum_in[j];  // 保存這一輪計算結果
             end
-        end
-        else if (clk) begin     // pos clk latch
-            for (j = 0; j < 16; j = j + 1) begin
-                partial_sum_out[j] = latch_array_out[j * 384 + counter * 24 + 23 -: 24];
-            end
+
+            result_valid <= 1;
         end
     end
 
 endmodule
-
 `endif
+
 
 `ifndef MAC_DATAPATH
 `define MAC_DATAPATH

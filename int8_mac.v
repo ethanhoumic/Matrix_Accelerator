@@ -1,10 +1,9 @@
 `timescale 1 ns/1 ps
-
 `ifndef INT8_MAC
 `define INT8_MAC
 
 module int8_mac #(
-    parameter NUM = 64
+    parameter NUM = 33
 )(
     input wire clk,
     input wire rst_n,
@@ -15,40 +14,38 @@ module int8_mac #(
     output reg [23:0] partial_sum_out
 );
 
-    wire [7:0] a [0:31];
-    wire [7:0] b [0:31];
-    wire [23:0] mult_sum;
+    wire signed [7:0] a [0:NUM-1];
+    wire signed [7:0] b [0:NUM-1];
+    wire signed [31:0] products [0:NUM-1];
+    wire signed [31:0] dot_sum;
 
-    integer i;
-
-    genvar j;
+    genvar i;
     generate
-        for (j = 0; j < 32; j = j + 1) begin
-            assign a[j] = a_vec[(j * 8) +: 8];
-            assign b[j] = b_vec[(j * 8) +: 8];
+        for (i = 0; i < NUM; i = i + 1) begin : unpack
+            assign a[i] = a_vec[i * 8 +: 8];
+            assign b[i] = b_vec[i * 8 +: 8];
+            assign products[i] = a[i] * b[i];
         end
     endgenerate
 
-    assign mult_sum = 
-        a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] +
-        a[4] * b[4] + a[5] * b[5] + a[6] * b[6] + a[7] * b[7] +
-        a[8] * b[8] + a[9] * b[9] + a[10] * b[10] + a[11] * b[11] +
-        a[12] * b[12] + a[13] * b[13] + a[14] * b[14] + a[15] * b[15] +
-        a[16] * b[16] + a[17] * b[17] + a[18] * b[18] + a[19] * b[19] +
-        a[20] * b[20] + a[21] * b[21] + a[22] * b[22] + a[23] * b[23] +
-        a[24] * b[24] + a[25] * b[25] + a[26] * b[26] + a[27] * b[27] +
-        a[28] * b[28] + a[29] * b[29] + a[30] * b[30] + a[31] * b[31];
+    assign dot_sum =
+        products[0] + products[1] + products[2] + products[3] +
+        products[4] + products[5] + products[6] + products[7] +
+        products[8] + products[9] + products[10] + products[11] +
+        products[12] + products[13] + products[14] + products[15] +
+        products[16] + products[17] + products[18] + products[19] +
+        products[20] + products[21] + products[22] + products[23] +
+        products[24] + products[25] + products[26] + products[27] +
+        products[28] + products[29] + products[30] + products[31] +
+        products[32];
 
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+        if (!rst_n)
             partial_sum_out <= 0;
-        end
-        else if (int8_en) begin
-            partial_sum_out <= mult_sum + partial_sum_in;
-        end
-        else begin
+        else if (int8_en)
+            partial_sum_out <= (dot_sum + partial_sum_in) & 24'hFFFFFF;
+        else
             partial_sum_out <= 0;
-        end
     end
 
 endmodule
