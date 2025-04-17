@@ -15,15 +15,15 @@ module int8_mac #(
     output reg [23:0] partial_sum_out
 );
 
-    wire [7:0] a [0:32];
-    wire [7:0] b [0:32];
+    wire [7:0] a [0:31];
+    wire [7:0] b [0:31];
     wire [23:0] mult_sum;
 
     integer i;
 
     genvar j;
     generate
-        for (j = 0; j < 33; j = j + 1) begin
+        for (j = 0; j < 32; j = j + 1) begin
             assign a[j] = a_vec[(j * 8) +: 8];
             assign b[j] = b_vec[(j * 8) +: 8];
         end
@@ -37,8 +37,7 @@ module int8_mac #(
         a[16] * b[16] + a[17] * b[17] + a[18] * b[18] + a[19] * b[19] +
         a[20] * b[20] + a[21] * b[21] + a[22] * b[22] + a[23] * b[23] +
         a[24] * b[24] + a[25] * b[25] + a[26] * b[26] + a[27] * b[27] +
-        a[28] * b[28] + a[29] * b[29] + a[30] * b[30] + a[31] * b[31] +
-        a[32] * b[32];
+        a[28] * b[28] + a[29] * b[29] + a[30] * b[30] + a[31] * b[31];
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

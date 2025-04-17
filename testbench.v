@@ -5,6 +5,7 @@
 `define PATTERN_A "a_sram_binary.txt"
 `define PATTERN_B "b_sram_binary.txt"
 `define PATTERN_OUTPUT "output_sram_binary.txt"
+`define PATTERN_HARDWARE "latch_array_output.txt"
 
 module tb;
     reg clk;
@@ -27,15 +28,17 @@ module tb;
         .latch_array_out(latch_array_out)
     );
 
-    integer i, j, k;
+    integer i, j, k, error;
     reg [263:0] a_buffer [0:2047];   // 16 banks 
     reg [263:0] b_buffer [0:2047];   // single bank
     reg [383:0] output_buffer [0:15];
-    reg [3:0] error;
 
     always #5 clk = ~clk;
 
     initial begin
+
+        integer fd;
+        fd = $fopen(`PATTERN_HARDWARE, "w");
 
         $fsdbDumpfile("simulation.fsdb");
         $fsdbDumpvars(0, tb);
@@ -49,6 +52,7 @@ module tb;
         is_vsq = 0;
         a_vec = 0;
         b_vec = 0;
+        error = 0;
 
         $readmemb(`PATTERN_A, a_buffer);
         $readmemb(`PATTERN_B, b_buffer);
@@ -68,7 +72,7 @@ module tb;
                 end
             end
         end
-        
+
         #100;
 
         for (i = 0; i < 16; i = i + 1) begin
@@ -78,13 +82,19 @@ module tb;
             end else begin
                 $display("Correct at index %d: Expected %b, got %b", i, output_buffer[i], latch_array_out[i * 384 +: 384]);
             end
+            $fdisplay(fd, "%b", latch_array_out[i * 384 +: 384]);
         end
-
-        #100;
         
+        $fclose(fd);
+        if (error == 0) begin
+            $display("All tests passed!");
+        end else begin
+            $display("%d errors found!", error);
+        end
+        #100;
+
         $finish;
 
     end
 
 endmodule
-
