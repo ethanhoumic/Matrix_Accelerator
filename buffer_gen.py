@@ -1,57 +1,75 @@
+
 import random
+from collections import deque
 
 A_WIDTH = 264
 B_WIDTH = 264
 BANKS = 16
 CYCLES = 128
-ELEMENTS = 33  # 264 bits / 8 = 33 int8 values
+ELEMENTS = 33
+COUNTER_MOD = 16
 
 def generate_bin_string(n):
     return ''.join(random.choice('01') for _ in range(n))
 
-# --- 1. Generate input files ---
-with open("a_sram_binary.txt", "w") as f:
-    for _ in range(BANKS * CYCLES):  # 2048 entries
-        f.write(generate_bin_string(A_WIDTH) + "\n")
+def generate_input_files():
+    with open("a_sram_binary.txt", "w") as f:
+        for _ in range(BANKS * CYCLES):
+            f.write(generate_bin_string(A_WIDTH) + "\n")
 
-with open("b_sram_binary.txt", "w") as f:
-    for _ in range(BANKS * CYCLES):  # 2048 entries
-        f.write(generate_bin_string(B_WIDTH) + "\n")
+    with open("b_sram_binary.txt", "w") as f:
+        for _ in range(BANKS * CYCLES):
+            f.write(generate_bin_string(B_WIDTH) + "\n")
 
-# --- 2. Read input ---
-with open("a_sram_binary.txt", "r") as f:
-    a_buffer = [line.strip() for line in f.readlines()]
+def read_input_file(path):
+    with open(path, 'r') as f:
+        return [line.strip() for line in f.readlines()]
 
-with open("b_sram_binary.txt", "r") as f:
-    b_buffer = [line.strip() for line in f.readlines()]
+def write_output_file(path, lines):
+    with open(path, 'w') as f:
+        for line in lines:
+            f.write(line + '\n')
 
-# --- 3. Initialize latch [bank][counter] = 24-bit int ---
-latch_array = [[0 for _ in range(16)] for _ in range(16)]  # 16 banks × 16 counters
+def simulate_mac_with_delay(a_buffer, b_buffer):
+    latch_array = [[0 for _ in range(COUNTER_MOD)] for _ in range(BANKS)]
+    pending_write_queue = deque()
 
-# --- 4. Simulate Verilog behavior ---
-for cycle in range(CYCLES):
-    # 固定 16 組 a_vec
-    a_vectors = []
-    for bank in range(16):
-        bits = a_buffer[cycle * 16 + bank]
-        a_vals = [int(bits[i*8:(i+1)*8], 2) for i in range(ELEMENTS)]
-        a_vectors.append(a_vals)
+    for cycle in range(CYCLES):
+        a_vectors = []
+        for bank in range(BANKS):
+            bits = a_buffer[cycle * 16 + bank]
+            a_vals = [int(bits[i * 8:(i + 1) * 8], 2) for i in range(ELEMENTS)]
+            a_vectors.append(a_vals)
 
-    # 依序處理 16 次 counter（b_vec 不同）
-    for counter in range(16):
-        b_bits = b_buffer[cycle * 16 + counter]
-        b_vals = [int(b_bits[i*8:(i+1)*8], 2) for i in range(ELEMENTS)]
+        for counter in range(COUNTER_MOD):
+            while pending_write_queue:
+                bank, delayed_counter, val = pending_write_queue.popleft()
+                latch_array[bank][delayed_counter] = val
 
-        for bank in range(16):
-            acc = latch_array[bank][counter]
-            dot = sum(a_vectors[bank][i] * b_vals[i] for i in range(ELEMENTS))
-            acc = (acc + dot) & 0xFFFFFF  # 24-bit wrap
-            latch_array[bank][counter] = acc
+            b_bits = b_buffer[cycle * 16 + counter]
+            b_vals = [int(b_bits[i * 8:(i + 1) * 8], 2) for i in range(ELEMENTS)]
 
-# --- 5. Dump output ---
-with open("output_sram_binary.txt", "w") as f:
-    for bank in range(16):
-        line = ''.join(format(latch_array[bank][counter], '024b') for counter in range(16))
-        f.write(line + "\n")
+            for bank in range(BANKS):
+                acc = latch_array[bank][counter]
+                dot = sum(a_vectors[bank][i] * b_vals[i] for i in range(ELEMENTS))
+                result = (acc + dot) & 0xFFFFFF
+                pending_write_queue.append((bank, counter, result))
 
-print("Correct simulation output saved to output_sram_binary.txt")
+    while pending_write_queue:
+        bank, delayed_counter, val = pending_write_queue.popleft()
+        latch_array[bank][delayed_counter] = val
+
+    output_lines = []
+    for bank in range(BANKS):
+        line = ''.join(format(latch_array[bank][i], '024b') for i in range(COUNTER_MOD))
+        output_lines.append(line)
+
+    return output_lines
+
+if __name__ == '__main__':
+    generate_input_files()
+    a_buffer = read_input_file("a_sram_binary.txt")
+    b_buffer = read_input_file("b_sram_binary.txt")
+    output_lines = simulate_mac_with_delay(a_buffer, b_buffer)
+    write_output_file("output_sram_binary.txt", output_lines)
+    print("a_sram_binary.txt, b_sram_binary.txt 和 output_sram_binary.txt 已成功產生")
