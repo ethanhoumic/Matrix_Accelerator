@@ -8,7 +8,7 @@ module int8_mac (
     input wire [263:0] a_vec,
     input wire [263:0] b_vec,
     input wire [23:0] partial_sum_in,
-    output reg [23:0] partial_sum_out
+    output wire [23:0] partial_sum_out
 );
 
     wire [7:0] a [0:32];
@@ -37,7 +37,7 @@ module int8_mac (
         a[32] * b[32]
     ) & 21'b111111111111111111111; // Mask to 21 bits
 
-    partial_sum_out = (partial_sum_in & int8_en) + mult_sum;
+    assign partial_sum_out = (partial_sum_in & int8_en) + mult_sum;
 
 endmodule
 

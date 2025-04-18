@@ -7,7 +7,7 @@ module int4_mac (
     input wire [263:0] a_vec,
     input wire [263:0] b_vec,
     input wire [23:0] partial_sum_in,
-    output reg [23:0] partial_sum_out
+    output wire [23:0] partial_sum_out
 );
 
     wire [3:0] a [0:65];
@@ -41,7 +41,7 @@ module int4_mac (
         a[60] * b[60] + a[61] * b[61] + a[62] * b[62] + a[63] * b[63] +
         a[64] * b[64]) & 14'b11111111111111; // Mask to 24 bits
 
-    partial_sum_out = (partial_sum_in & int4_en) + mult_sum;
+    assign partial_sum_out = (partial_sum_in & {24{int4_en}}) + mult_sum;
 
 endmodule
 

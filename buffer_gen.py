@@ -66,10 +66,42 @@ def simulate_mac_with_delay(a_buffer, b_buffer):
 
     return output_lines
 
+def simulate_mac_with_vsq(a_buffer, b_buffer):
+    latch_array = [[0 for _ in range(COUNTER_MOD)] for _ in range(BANKS)]
+    pending_write_queue = deque()
+
+    for cycle in range(CYCLES):
+        a_factors = [int(a_buffer[cycle * 16 + bank][0:8], 2) for bank in range(BANKS)]
+        b_factor = int(b_buffer[cycle * 16][0:8], 2)
+
+        for counter in range(COUNTER_MOD):
+            while pending_write_queue:
+                bank, delayed_counter, val = pending_write_queue.popleft()
+                latch_array[bank][delayed_counter] = val
+
+            for bank in range(BANKS):
+                acc = latch_array[bank][counter]
+                product = a_factors[bank] * b_factor
+                product &= 0xFF  # 模擬 8-bit mask
+                scaled_product = (acc * product) & 0x3FFFFF
+                result = (acc + scaled_product) & 0xFFFFFF
+                pending_write_queue.append((bank, counter, result))
+
+    while pending_write_queue:
+        bank, delayed_counter, val = pending_write_queue.popleft()
+        latch_array[bank][delayed_counter] = val
+
+    output_lines = []
+    for bank in range(BANKS):
+        line = ''.join(format(latch_array[bank][i], '024b') for i in range(COUNTER_MOD))
+        output_lines.append(line)
+
+    return output_lines
+
 if __name__ == '__main__':
     generate_input_files()
     a_buffer = read_input_file("a_sram_binary.txt")
     b_buffer = read_input_file("b_sram_binary.txt")
-    output_lines = simulate_mac_with_delay(a_buffer, b_buffer)
+    output_lines = simulate_mac_with_vsq(a_buffer, b_buffer)
     write_output_file("output_sram_binary.txt", output_lines)
     print("a_sram_binary.txt, b_sram_binary.txt 和 output_sram_binary.txt 已成功產生")

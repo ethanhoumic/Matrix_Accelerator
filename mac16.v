@@ -106,7 +106,7 @@ module MAC_datapath (
         .b_factor(b_vec[7:0]),
         .partial_sum_in(partial_sum_in),
         .partial_sum_out(partial_sum_vsq)
-    )
+    );
 
     always @(*) begin
         if (is_int8_mode) partial_sum_out = partial_sum_int8;

@@ -60,7 +60,8 @@ module tb;
 
         #5;
         rst_n = 1;
-        is_int8_mode = 1;
+        is_int4_mode = 1;
+        is_vsq = 1;
 
         for (i = 0; i < 128; i = i + 1) begin
             for (j = 0; j < 16; j = j + 1) begin
