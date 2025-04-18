@@ -3,8 +3,6 @@
 `define INT4_MAC
 
 module int4_mac (
-    input wire clk,
-    input wire rst_n,
     input wire int4_en,
     input wire [263:0] a_vec,
     input wire [263:0] b_vec,
@@ -12,20 +10,20 @@ module int4_mac (
     output reg [23:0] partial_sum_out
 );
 
-    wire [3:0] a [0:63];
-    wire [3:0] b [0:63];
+    wire [3:0] a [0:65];
+    wire [3:0] b [0:65];
     wire [23:0] mult_sum;
 
     genvar j;
     generate
-        for (j = 0; j < 64; j = j + 1) begin
+        for (j = 0; j < 65; j = j + 1) begin
             assign a[j] = a_vec[(j * 4) +: 4];
             assign b[j] = b_vec[(j * 4) +: 4];
         end
     endgenerate
 
-    assign mult_sum = 
-        a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] +
+    assign mult_sum =      // a[0], a[1] are scale factors
+        (a[2] * b[2] + a[3] * b[3] +
         a[4] * b[4] + a[5] * b[5] + a[6] * b[6] + a[7] * b[7] +
         a[8] * b[8] + a[9] * b[9] + a[10] * b[10] + a[11] * b[11] +
         a[12] * b[12] + a[13] * b[13] + a[14] * b[14] + a[15] * b[15] +
@@ -40,19 +38,10 @@ module int4_mac (
         a[48] * b[48] + a[49] * b[49] + a[50] * b[50] + a[51] * b[51] +
         a[52] * b[52] + a[53] * b[53] + a[54] * b[54] + a[55] * b[55] +
         a[56] * b[56] + a[57] * b[57] + a[58] * b[58] + a[59] * b[59] +
-        a[60] * b[60] + a[61] * b[61] + a[62] * b[62] + a[63] * b[63];
+        a[60] * b[60] + a[61] * b[61] + a[62] * b[62] + a[63] * b[63] +
+        a[64] * b[64]) & 14'b11111111111111; // Mask to 24 bits
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            partial_sum_out <= 0;
-        end
-        else if (int4_en) begin
-            partial_sum_out <= mult_sum + partial_sum_in;
-        end
-        else begin
-            partial_sum_out <= 0;
-        end 
-    end
+    partial_sum_out = (partial_sum_in & int4_en) + mult_sum;
 
 endmodule
 
