@@ -1,73 +1,49 @@
 import numpy as np
 
-def round_to_nbit(x, n):
-    return np.round(x * (2 ** (n - 1))) / (2 ** (n - 1))
+# 原始浮點 weights 和 activations
+w_float = np.array([[0.3, -0.6, 0.9], [0.7, -0.7, 0.2], [0.1, -0.4, 0.5]])
+a_float = np.array([[0.5, -0.2, 0.7], [0.4, -0.1, 0.3], [0.6, -0.5, 0.8]])
 
-def scale_factor(v, n):
-
-    v_max = np.abs(np.max(v))
-    s = (2 ** (n - 1) - 1) / v_max
-
-    return s
-
-def quantize(v, s):
-
-    v = np.array(v)
-    v_q = np.round(v * s) // s
-
-    return v_q
-
-# assume int8 mode
-n = 8
-
-w = [[1.65, 9.47, 6.18, 4.13], 
-     [1.54, 0.11, 9.01, 8.11], 
-     [6.20, 6.31, 4.74, 5.28], 
-     [1.13, 9.32, 4.13, 0.11]]
-a = [[0.13, 7.18, 5.42, 1.34],
-     [6.31, 4.54, 8.13, 0.44],
-     [1.32, 6.47, 4.99, 3.21],
-     [1.66, 6.13, 6.12, 4.97]]
-
-print("Input weights: ", w)
-print("Input activations: ", a)
-
+# 1. 計算每個 vector 的 scale（Per-vector quantization）
 s_w = []
 s_a = []
-for i in range(len(w)):
-    s_w.append(round_to_nbit(scale_factor(w[i], n), 8))
-for i in range(len(a)):
-    s_a.append(round_to_nbit(scale_factor(a[i], n), 8))
+for i in range(3):
+    s_w.append(np.max(np.abs(w_float[i])) / 127)
+    s_a.append(np.max(np.abs(a_float[i])) / 127)
 
-print("Scale factor for weights: ", s_w)
-print("Scale factor for activations: ", s_a)
+# 2. 量化成 int8
+w_int8 = np.round(w_float / s_w).astype(np.int8)
+a_int8 = np.round(a_float / s_a).astype(np.int8)
 
-dot_product = []
-for i in range(len(w)):
-    dot_product.append(round_to_nbit(np.dot(w[i], a[i]), 24))
-s_product = []
-for i in range(len(w)):
-    s_product.append(round_to_nbit(s_a[i] * s_w[i], 8))
-partial_sum = []
-for i in range(len(w)):
-    partial_sum.append(round_to_nbit(dot_product[i] * s_product[i], 24))
+# 3. 在硬體中做整數乘加（MAC）
+int_mac = []
+for i in range(3):
+    int_mac.append(np.dot(w_int8[i].astype(np.int32), a_int8[i].astype(np.int32)))
+int_mac = np.array(int_mac).flatten()  # Flatten the list
 
-print("Dot product: ", dot_product)
-print("Scale factor for product: ", s_product)
-print("Partial sum: ", partial_sum)
+# 4. 還原為浮點（第一層 scale）
+float_mac = []
+for i in range(3):
+    float_mac.append(s_w[i] * s_a[i] * int_mac[i])
+float_mac = np.array(float_mac).flatten()  # Flatten the list
 
-per_layer_scale_factor = round_to_nbit(scale_factor(np.ravel(partial_sum), n), 10)
-print("Per-layer scale factor: ", per_layer_scale_factor)
-partial_sum = round_to_nbit(np.array(partial_sum) * per_layer_scale_factor, 24)
+# 5. 根據 float_mac 決定 per-layer scale（第二層 scale）
+s_layer = np.max(np.abs(np.maximum(s_w, s_a))) / 7
+output_float = s_layer * np.array(float_mac)
 
-s_final =[]
-for i in range(len(partial_sum)):
-    s_final.append(round_to_nbit(scale_factor(partial_sum[i], n), 8))
-    partial_sum[i] = quantize(partial_sum[i], s_final[i])
-print("after final quantization: ", partial_sum)
+# 6. 再次量化成 int8 輸出
+s_out = np.max(np.abs(output_float)) / 127
+output_int8 = np.round(output_float / s_out).astype(np.int8)
 
-
-
-
-
-
+# 7. 輸出所有細節
+print("=== Two-Level Quantization Simulation ===")
+print(f"Original w_float: \n{w_float}")
+print(f"Original a_float: \n{a_float}")
+print(f"Quantized w_int8: \n{w_int8}, \nscale: \n{[f'{scale:.5f}' for scale in s_w]}")
+print(f"Quantized a_int8: \n{a_int8}, \nscale: \n{[f'{scale:.5f}' for scale in s_a]}")
+print(f"Integer MAC result: \n{int_mac}")
+print(f"Float MAC (1st scale): \n{[f'{value:.5f}' for value in float_mac]}")
+print(f"Layer scale (2nd scale): {s_layer:.5f}")
+print(f"Float output (after 2-level scaling): {[f'{output:.5f}' for output in output_float]}")
+print(f"Output scale (for quantization): {s_out:.10f}")
+print(f"Quantized output_int8: {output_int8}")
