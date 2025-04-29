@@ -39,7 +39,7 @@ module int4_mac (
         a[52] * b[52] + a[53] * b[53] + a[54] * b[54] + a[55] * b[55] +
         a[56] * b[56] + a[57] * b[57] + a[58] * b[58] + a[59] * b[59] +
         a[60] * b[60] + a[61] * b[61] + a[62] * b[62] + a[63] * b[63] +
-        a[64] * b[64]) & 14'b11111111111111; // Mask to 24 bits
+        a[64] * b[64]) & 14'b11111111111111; // Mask to 14 bits
 
     assign partial_sum_out = (partial_sum_in & {24{int4_en}}) + mult_sum;
 
