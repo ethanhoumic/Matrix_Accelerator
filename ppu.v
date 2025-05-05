@@ -9,14 +9,15 @@ module ppu (
     input wire [7:0] scale,
     input wire [7:0] bias,
     input wire valid,
-    output wire [295:0] from_latch_array,
-    output reg read_en
+    output wire [17:0] vec_max_wire,
+    output reg latch_done
     // output reg [135:0] output_data,
     // output reg done
 );
-
-    reg latch_done;
+    integer i;
+    reg read_en;
     wire read_en_wire = read_en;
+    reg [295:0] from_latch_array;
     reg [4:0] counter;
 
     // scaling
@@ -65,6 +66,8 @@ module ppu (
         .read_data(from_latch_array)
     );
 
+
+    // reading and writing vsq buffer
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             counter <= 4'b0000;
@@ -76,7 +79,7 @@ module ppu (
                 read_en <= 1'b0;
                 latch_done <= 1'b1;
             end
-            else if (counter == 5'b01111) begin
+            else if (counter >= 5'b01111 && counter < 5'b11111) begin
                 read_en <= 1'b1;
                 latch_done <= 1'b0;
             end
@@ -93,21 +96,42 @@ module ppu (
         end
     end
 
-    // vector Max
-    // reg [17:0] vec_max;
-    // always@(posedge clk or negedge rst_n) begin
+    // vector max
+    reg [17:0] vec_max;
+    assign vec_max_wire = vec_max;
+    always@(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            vec_max <= 0;
+        end
+        else if (read_en) begin
+            for (i = 0; i < 16; i = i + 1) begin
+                if (from_latch_array[(i * 18) +: 18] > vec_max) begin
+                    vec_max <= from_latch_array[(i * 18) +: 18];
+                end
+            end
+        end
+        else begin
+            vec_max <= vec_max;
+        end
+    end
+
+    // reciprocal
+    // reg [17:0] reciprocal;
+    // always @(posedge clk or negedge rst_n) begin
     //     if (!rst_n) begin
-    //         vec_max <= 0;
+    //         reciprocal <= 0;
     //     end
     //     else if (latch_done) begin
-            
+    //         reciprocal <= (vec_max == 0) ? 256 / (vec_max + 1'b1) : 256 / vec_max;
     //     end
-    //     for (j = 0; j < 16; j = j + 1) begin
-    //         if (truncated_sum[(j * 18) +: 18] > vec_max) begin
-    //             vec_max = truncated_sum[(j * 18) +: 18];
-    //         end
+    //     else begin
+    //         reciprocal <= reciprocal;
     //     end
     // end
+
+    // quantize and round
+
+
 
 
 endmodule
