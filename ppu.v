@@ -15,53 +15,57 @@ module ppu (
     output wire done_wire
 );
     integer i;
-    reg read_en;
-    wire read_en_wire = read_en;
-    reg write_en;
-    wire write_en_wire = write_en;
-    reg reset_addr;
-    wire reset_addr_wire = reset_addr;
-    reg [295:0] from_latch_array;
-    reg [3:0] counter;
-    reg latch_done;
-    reg reciprocal_done;
+    reg     read_en;
+    wire    read_en_wire = read_en;
+    reg     write_en;
+    wire    write_en_wire = write_en;
+    reg     reset_addr;
+    wire    reset_addr_wire = reset_addr;
+    reg     [295:0] from_latch_array;
+    reg     [3:0] counter;
+    reg     latch_done;
+    wire    [639:0] scaled_sum;
+    wire    [639:0] biased_sum;
+    wire    [639:0] relu_sum;
+    wire    [295:0] truncated_sum;
+    genvar  j;
 
-    // scaling
-    wire [639:0] scaled_sum;
-    genvar j;
-    generate
-        for (j = 0; j < 16; j = j + 1) begin: SCALING
-            wire [23:0] in_scale = partial_sum[(j * 24) +: 24];
-            assign scaled_sum[(j * 40) +: 40] = in_scale * scale;
-        end
-    endgenerate
+    // scaling module
+    scaling_module scaling_module(
+        .scale(scale),
+        .partial_sum(partial_sum),
+        .scaled_sum(scaled_sum)
+    );
 
     // biasing
-    wire [639:0] biased_sum;
-    generate
-        for (j = 0; j < 16; j = j + 1) begin: BIASING
-            wire [39:0] in_bias = scaled_sum[(j * 40) +: 40];
-            assign biased_sum[(j * 40) +: 40] = in_bias + {32'b0, bias};
-        end
-    endgenerate
+    
+    biasing_module biasing_module(
+        .bias(bias),
+        .scaled_sum(scaled_sum),
+        .biased_sum(biased_sum)
+    );
 
     // relu
-    wire [639:0] relu_sum;
-    generate
-        for (j = 0; j < 16; j = j + 1) begin: RELU
-            wire [39:0] in = biased_sum[(j * 40) +: 40];
-            assign relu_sum[(j * 40) +: 40] = ($signed(in) < 0) ? 40'b0 : in;
-        end
-    endgenerate
+    relu_module relu_module(
+        .biased_sum(biased_sum),
+        .relu_sum(relu_sum)
+    );
 
     // truncation
-    wire [295:0] truncated_sum;
-    generate
-        for (j = 0; j < 16; j = j + 1) begin: TRUNCATION
-            assign truncated_sum[(j * 18) +: 18] = relu_sum[(j * 40) + 39 -: 18]; // Truncate to 18 bits
-        end
-        assign truncated_sum[295:288] = 8'b0; // Padding to 296 bits
-    endgenerate
+    truncation_module truncation_module(
+        .relu_sum(relu_sum),
+        .truncated_sum(truncated_sum)
+    );
+
+    // reciprocal
+    reciprocal_module reciprocal_module(
+        .clk(clk),
+        .rst_n(rst_n),
+        .latch_done(latch_done),
+        .vec_max_wire(vec_max_wire),
+        .reciprocal_wire(reciprocal_wire),
+        .reciprocal_done_wire(reciprocal_done_wire)
+    );
 
     // vsq buffer
     latch_array latch_array_inst (
@@ -91,7 +95,7 @@ module ppu (
         else begin
             case (state)
                 IDLE: begin
-                    if (reciprocal_done) begin 
+                    if (reciprocal_done_wire) begin 
                         state <= OUTPUT;
                         read_en <= 1'b1;
                         latch_done <= 1'b0;
@@ -136,64 +140,15 @@ module ppu (
             endcase
         end
     end
-    //     else if (valid) begin
-    //         if (counter == 5'b11111) begin
-    //             read_en <= 1'b0;
-    //             latch_done <= 1'b1;
-    //         end
-    //         else if (counter >= 5'b01111 && counter < 5'b11111) begin
-    //             read_en <= 1'b1;
-    //             latch_done <= 1'b0;
-    //         end
-    //         else begin
-    //             read_en <= 1'b0;
-    //             latch_done <= 1'b0;
-    //         end
-    //         counter <= (counter == 5'b11111) ? 5'b00000 : counter + 1;
-    //     end
-    //     else begin
-    //         counter <= counter;
-    //         read_en <= read_en;
-    //         latch_done <= latch_done;
-    //     end
-    // end
 
     // vector max
-    reg [17:0] vec_max;
-    assign vec_max_wire = vec_max;
-    always@(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            vec_max <= 0;
-        end
-        else if (read_en) begin
-            for (i = 0; i < 16; i = i + 1) begin
-                if (from_latch_array[(i * 18) +: 18] > vec_max) begin
-                    vec_max <= from_latch_array[(i * 18) +: 18];
-                end
-            end
-        end
-        else begin
-            vec_max <= vec_max;
-        end
-    end
-
-    // reciprocal
-    reg [39:0] reciprocal;
-    assign reciprocal_wire = reciprocal;
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            reciprocal <= 0;
-            reciprocal_done <= 1'b0;
-        end
-        else if (latch_done) begin
-            reciprocal <= (vec_max == 0) ? 18'hffff : (255 << 13)/ vec_max;
-            reciprocal_done <= 1'b1;
-        end
-        else begin
-            reciprocal <= reciprocal;
-            reciprocal_done <= reciprocal_done;
-        end
-    end
+    max_module max_module(
+        .clk(clk),
+        .rst_n(rst_n),
+        .read_en(read_en),
+        .from_latch_array(from_latch_array),
+        .vec_max_wire(vec_max_wire)
+    );
 
     // quantize and round
     reg [135:0] quantized_data;
@@ -215,7 +170,7 @@ module ppu (
             done <= 1'b0;
             buffer <= 1'b0;
         end
-        else if (reciprocal_done && reciprocal != 0) begin
+        else if (reciprocal_done_wire && reciprocal_wire != 0) begin
             if (buffer == 3) begin
                 for (i = 0; i < 16; i = i + 1) begin
                     if (temp_val[i] > 255) begin
@@ -225,13 +180,13 @@ module ppu (
                         quantized_data[i*8 +: 8] <= temp_val[i][7:0];
                     end
                 end
-                quantized_data[135:128] <= reciprocal[17:9];
+                quantized_data[135:128] <= reciprocal_wire[17:9];
                 done <= 1'b1;
                 buffer <= 0;
             end
             else if (buffer == 2) begin
                 for (i = 0; i < 16; i = i + 1) begin
-                    temp_val[i] <= ((from_latch_array[i*18 +: 18] * reciprocal) >> 13);
+                    temp_val[i] <= ((from_latch_array[i*18 +: 18] * reciprocal_wire) >> 13);
                 end
                 buffer <= buffer + 1;
             end
@@ -243,6 +198,14 @@ module ppu (
             done <= 1'b0;
         end
     end
+
+    // approx softmax
+    // reg [127:0] approx_softmax;
+    // always @(posedge clk or negedge rst_n) begin
+    //     if (!rst_n) begin
+    //         approx_softmax <= 0;
+    //     end
+    // end
 
 endmodule
 
@@ -293,4 +256,156 @@ module latch_array (
     assign read_data = (read_en) ? latch_array[read_addr] : 296'b0;
 
 endmodule
+`endif
+
+`ifndef SCALING_MODULE
+`define SCALING_MODULE
+
+module scaling_module(
+    input wire [7:0] scale,
+    input wire [383:0] partial_sum,
+    output wire [639:0] scaled_sum
+);
+
+    genvar j;
+    generate
+        for (j = 0; j < 16; j = j + 1) begin: SCALING
+            wire [23:0] in_scale = partial_sum[(j * 24) +: 24];
+            assign scaled_sum[(j * 40) +: 40] = in_scale * scale;
+        end
+    endgenerate
+
+endmodule
+
+`endif
+
+`ifndef BIASING_MODULE
+`define BIASING_MODULE
+
+module biasing_module (
+    input wire [7:0] bias,
+    input wire [639:0] scaled_sum,
+    output wire [639:0] biased_sum
+);
+
+    genvar j;
+    generate
+        for (j = 0; j < 16; j = j + 1) begin: BIASING
+            wire [39:0] in_bias = scaled_sum[(j * 40) +: 40];
+            assign biased_sum[(j * 40) +: 40] = in_bias + {32'b0, bias};
+        end
+    endgenerate
+    
+endmodule
+
+`endif
+
+`ifndef RELU_MODULE
+`define RELU_MODULE
+
+module relu_module (
+    input wire [639:0] biased_sum,
+    output wire [639:0] relu_sum
+);
+
+    genvar j;
+    generate
+        for (j = 0; j < 16; j = j + 1) begin: RELU
+            wire [39:0] in_relu = biased_sum[(j * 40) +: 40];
+            assign relu_sum[(j * 40) +: 40] = ($signed(in_relu) < 0) ? 40'b0 : in_relu;
+        end
+    endgenerate
+
+endmodule
+`endif
+
+`ifndef TRUNCATION_MODULE
+`define TRUNCATION_MODULE
+
+module truncation_module (
+    input wire [639:0] relu_sum,
+    output wire [295:0] truncated_sum
+);
+
+    genvar j;
+    generate
+        for (j = 0; j < 16; j = j + 1) begin: TRUNCATION
+            assign truncated_sum[(j * 18) +: 18] = relu_sum[(j * 40) + 39 -: 18]; // Truncate to 18 bits
+        end
+        assign truncated_sum[295:288] = 8'b0; // Padding to 296 bits
+    endgenerate
+endmodule
+
+`endif
+
+`ifndef MAX_MODULE
+`define MAX_MODULE
+
+module max_module(
+    input wire clk,
+    input wire rst_n,
+    input wire read_en,
+    input wire [295:0] from_latch_array,
+    output wire [17:0] vec_max_wire
+);
+
+    reg [17:0] vec_max;
+    integer i;
+
+    assign vec_max_wire = vec_max;
+
+    always@(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            vec_max <= 0;
+        end
+        else if (read_en) begin
+            for (i = 0; i < 16; i = i + 1) begin
+                if (from_latch_array[(i * 18) +: 18] > vec_max) begin
+                    vec_max <= from_latch_array[(i * 18) +: 18];
+                end
+            end
+        end
+        else begin
+            vec_max <= vec_max;
+        end
+    end
+
+endmodule
+
+`endif
+
+`ifndef RECIPROCAL_MODULE
+`define RECIPROCAL_MODULE
+
+module reciprocal_module(
+    input wire clk,
+    input wire rst_n,
+    input wire latch_done,
+    input wire [17:0] vec_max_wire,
+    output wire [17:0] reciprocal_wire,
+    output wire reciprocal_done_wire
+);
+
+    reg [39:0] reciprocal;
+    reg reciprocal_done;
+    assign reciprocal_wire = reciprocal;
+    assign reciprocal_done_wire = reciprocal_done;
+    
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            reciprocal <= 0;
+            reciprocal_done <= 1'b0;
+        end
+        else if (latch_done) begin
+            reciprocal <= (vec_max_wire == 0) ? 18'hffff : (255 << 13)/ vec_max_wire;
+            reciprocal_done <= 1'b1;
+        end
+        else begin
+            reciprocal <= reciprocal;
+            reciprocal_done <= reciprocal_done;
+        end
+    end
+
+endmodule
+
 `endif
