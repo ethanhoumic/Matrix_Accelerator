@@ -9,6 +9,7 @@ module ppu (
     input wire [7:0] scale,
     input wire [7:0] bias,
     input wire valid,
+    output wire [639:0] scaled_sum_wire,
     output wire [17:0] vec_max_wire,
     output wire [17:0] reciprocal_wire,
     output wire [135:0] quantized_data_wire,
@@ -25,7 +26,6 @@ module ppu (
     reg     [295:0] from_latch_array;
     reg     [3:0] counter;
     reg     latch_done;
-    wire    [639:0] scaled_sum;
     wire    [639:0] biased_sum;
     wire    [639:0] relu_sum;
     wire    [295:0] truncated_sum;
@@ -35,14 +35,14 @@ module ppu (
     scaling_module scaling_module(
         .scale(scale),
         .partial_sum(partial_sum),
-        .scaled_sum(scaled_sum)
+        .scaled_sum(scaled_sum_wire)
     );
 
     // biasing
     
     biasing_module biasing_module(
         .bias(bias),
-        .scaled_sum(scaled_sum),
+        .scaled_sum(scaled_sum_wire),
         .biased_sum(biased_sum)
     );
 
@@ -264,17 +264,35 @@ endmodule
 `ifndef SCALING_MODULE
 `define SCALING_MODULE
 
-module scaling_module(
-    input wire [7:0] scale,
-    input wire [383:0] partial_sum,
-    output wire [639:0] scaled_sum
+module scaling_module (
+    input wire [7:0] scale,                 // scale in FP8 (E4M3)
+    input wire [383:0] partial_sum,         // 16 * 24-bit input
+    output wire [639:0] scaled_sum          // 16 * 40-bit output
 );
 
+    // FP8 decoding
+    wire        sign = scale[7];
+    wire [3:0]  exp  = scale[6:3];           // exponent with bias 7
+    wire [2:0]  mant = scale[2:0];           // mantissa (fractional)
+
+    // Convert FP8 to fixed-point Q4.12
+    wire [15:0] scale_fixed;
+    wire [11:0] frac_part = {mant, 9'b0};        // mantissa in Q0.12
+    wire [15:0] base = 16'h1000 + frac_part;     // 1 + mant in Q4.12 = 0x1000 + frac_part
+    wire [4:0]  shift = (exp >= 7) ? (exp - 7) : (7 - exp);
+
+    wire [15:0] scaled_val_temp;
+    assign scaled_val_temp = (exp >= 7) ? (base << shift) : (base >> shift);
+    assign scale_fixed = sign ? (~scaled_val_temp + 1'b1) : scaled_val_temp;  // signed value
+
+    // Scale partial_sum
     genvar j;
     generate
         for (j = 0; j < 16; j = j + 1) begin: SCALING
-            wire [23:0] in_scale = partial_sum[(j * 24) +: 24];
-            assign scaled_sum[(j * 40) +: 40] = in_scale * scale;
+            wire signed [23:0] in_val = partial_sum[(j * 24) +: 24];
+            wire signed [31:0] scale_sq = ($signed(scale_fixed) * $signed(scale_fixed)) >>> 12;
+            wire signed [39:0] product = (in_val * scale_sq) >>> 12;
+            assign scaled_sum[(j * 40) +: 40] = product;
         end
     endgenerate
 

@@ -12,6 +12,7 @@ module tb;
     reg [7:0] bias;
     reg done;
     reg valid;
+    wire [639:0] scaled_sum_wire;
     wire [127:0] output_data;
     wire [17:0] reciprocal_wire;
     wire [17:0] vec_max;
@@ -24,6 +25,7 @@ module tb;
         .scale(scale),
         .bias(bias),
         .valid(valid),
+        .scaled_sum_wire(scaled_sum_wire),
         .vec_max_wire(vec_max),
         .reciprocal_wire(reciprocal_wire),
         .quantized_data_wire(quantized_data_wire),
@@ -48,13 +50,21 @@ module tb;
 
         #10;
 
+        /* Input datas in mac are (70, 80) * (40, 90),
+           so the quantized data in sram should be (6, 7) * (3, 7),
+           the per vector scale factor is 11.42857 and 12.85714
+           and second quantization yields gamma = 0.101237 = 0x1d in fp8,
+           so the scales are 113 and 127. 
+           Hence, in sram, the data should be (6, 7, 113) and (3, 7, 127), while gamma = 0x1d
+           The output of mac should be (6 * 3 + 7 * 7) * 113 * 127 = 961517,
+           and the scale is 0x1d. */
         rst_n = 1;
-        partial_sum = {24'b011000000000000000000000, {8{24'b010000000000000000000000}}, 24'b011111000000000000000000, {5{24'b010000000000000000000000}}, 24'b011100000000000000000000};
-        scale = 8'd16;
+        partial_sum = {16{24'd961517}};
+        scale = 8'h1d;
         bias = 8'd1;
         valid = 1;
 
-        $display("partial_sum = %b", partial_sum);
+        $display("partial_sum = %d", partial_sum[23:0]);
         $display("scale = %b", scale);
         $display("bias = %b", bias);
 
@@ -65,6 +75,7 @@ module tb;
 
     always @(posedge clk) begin
         if (done) begin
+            $display("The scaled sum is %d", scaled_sum_wire[39:0]);
             $display("The maximal element is %b", vec_max);
             $display("The per vector scale factor is %b", reciprocal_wire);
             $display("The quantized data is %b", quantized_data_wire);
