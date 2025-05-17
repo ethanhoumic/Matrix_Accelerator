@@ -11,6 +11,7 @@ module ppu (
     input wire valid,
     output wire [17:0] vec_max_wire,
     output wire [17:0] reciprocal_wire,
+    output wire [135:0] quantized_data_wire,
     output wire [127:0] output_data,
     output wire done_wire
 );
@@ -155,8 +156,8 @@ module ppu (
     reg [17:0] temp_val [0:15];
     reg [3:0] buffer;
     reg quantization_done;
-    wire quantized_data_wire = quantized_data;
     wire quantization_done_wire = quantization_done;
+    assign quantized_data_wire = quantized_data;
     
     // Simplified quantization logic
     always @(posedge clk or negedge rst_n) begin
@@ -202,7 +203,7 @@ module ppu (
     approx_softmax_module approx_softmax_module(
         .clk(clk),
         .rst_n(rst_n),
-        .quantized_data_wire(quantized_data_wire),
+        .quantized_data_wire(quantized_data_wire[127:0]),  // high 8 bits are max value
         .vec_max_wire(vec_max_wire),
         .softmax_en(quantization_done_wire),
         .approx_softmax_wire(output_data),
@@ -416,22 +417,22 @@ endmodule
 `define APPROX_SOFTMAX_MODULE
 
 module approx_softmax_module (
-    input wire clk,
-    input wire rst_n,
-    input wire [127:0] quantized_data_wire,
-    input wire [7:0] vec_max_wire,
-    input wire softmax_en,
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire [127:0] quantized_data_wire,
+    input  wire [7:0]   vec_max_wire,
+    input  wire         softmax_en,
     output wire [127:0] approx_softmax_wire,
-    output wire approx_softmax_done_wire
+    output wire         approx_softmax_done_wire
 );
-    reg approx_softmax_done;
-    reg [3:0] sum_dix;
-    reg [15:0]  shift_val [15:0];
+    reg         approx_softmax_done;
+    reg [7:0]   shift_val   [15:0];
+    reg [7:0]   shift_amt;
     reg [15:0]  exp_sum;
-    reg [15:0]  softmax_val [15:0];
+    reg [7:0]   softmax_val [15:0];
     reg [2:0]   state;
     reg [127:0] approx_softmax;
-    assign approx_softmax_wire = approx_softmax;
+    assign approx_softmax_wire      = approx_softmax;
     assign approx_softmax_done_wire = approx_softmax_done;
 
     integer i;
@@ -442,8 +443,8 @@ module approx_softmax_module (
             approx_softmax <= 0;
             state <= IDLE;
             approx_softmax_done <= 0;
-            sum_idx <= 0;
             exp_sum <= 0;
+            i = 0;
         end
         else begin
             case (state)
@@ -456,29 +457,24 @@ module approx_softmax_module (
                 end 
                 SHIFT: begin
                     for (i = 0; i < 16; i = i + 1) begin
-                        if (quantized_data_wire[(i * 8) +: 8] > vec_max_wire) begin
-                            shift_val[i] <= 16'd1;
-                        end
-                        else begin
-                            shift_val[i] <= (16'd1 << (quantized_data_wire[(i * 8) +: 8] - vec_max_wire));
-                        end
+                        shift_amt = vec_max_wire - quantized_data_wire[(i * 8) +: 8];
+                        if (shift_amt > 7)
+                            shift_amt = 7; // maximum shift amount is 7
+                        shift_val[i] <= 8'd128 >> shift_amt;
                     end
                     state <= SUM;
                 end
                 SUM: begin
-                    if (sum_idx == 15) begin
-                        state <= DIV;
-                        sum_idx <= 0;
-                    end
-                    else begin
-                        sum_idx <= sum_idx + 1;
-                    end
-                    exp_sum <= exp_sum + shift_val[sum_idx];
+                    exp_sum <= shift_val[0] + shift_val[1] + shift_val[2] + shift_val[3] +
+                               shift_val[4] + shift_val[5] + shift_val[6] + shift_val[7] +
+                               shift_val[8] + shift_val[9] + shift_val[10] + shift_val[11] +
+                               shift_val[12] + shift_val[13] + shift_val[14] + shift_val[15];
+                    state <= DIV;
                 end
                 DIV: begin
                     for (i = 0; i < 16; i = i + 1) begin
                         if (exp_sum != 0) begin
-                            softmax_val[i] <= shift_val[i] * 255 / exp_sum;
+                            softmax_val[i] <= (shift_val[i] << 8) / exp_sum;
                         end
                         else softmax_val[i] <= 0;
                     end
@@ -494,9 +490,8 @@ module approx_softmax_module (
                 default: begin
                     state <= state;
                     approx_softmax <= approx_softmax;
-                    approx_softmax_done <= approapprox_softmax_done;
+                    approx_softmax_done <= approx_softmax_done;
                     exp_sum <= exp_sum;
-                    sum_idx <= sum_idx;
                     for (i = 0; i < 16; i = i + 1) begin
                         shift_val[i] <= shift_val[i];
                         softmax_val[i] <= softmax_val[i];

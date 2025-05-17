@@ -12,9 +12,10 @@ module tb;
     reg [7:0] bias;
     reg done;
     reg valid;
-    wire [135:0] output_data;
+    wire [127:0] output_data;
     wire [17:0] reciprocal_wire;
     wire [17:0] vec_max;
+    wire [135:0] quantized_data_wire;
 
     ppu uut(
         .clk(clk),
@@ -25,6 +26,7 @@ module tb;
         .valid(valid),
         .vec_max_wire(vec_max),
         .reciprocal_wire(reciprocal_wire),
+        .quantized_data_wire(quantized_data_wire),
         .output_data(output_data),
         .done_wire(done)
     );
@@ -64,8 +66,9 @@ module tb;
     always @(posedge clk) begin
         if (done) begin
             $display("The maximal element is %b", vec_max);
-            $display("The output data is %b", output_data[127:0]);
             $display("The per vector scale factor is %b", reciprocal_wire);
+            $display("The quantized data is %b", quantized_data_wire);
+            $display("The output data is %b", output_data);
             $finish;
         end
     end
