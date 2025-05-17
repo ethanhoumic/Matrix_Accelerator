@@ -146,7 +146,8 @@ module ppu (
     max_module max_module(
         .clk(clk),
         .rst_n(rst_n),
-        .read_en(read_en),
+        .latch_en(read_en),
+        .from_relu(relu_sum),
         .from_latch_array(from_latch_array),
         .vec_max_wire(vec_max_wire)
     );
@@ -265,9 +266,9 @@ endmodule
 `define SCALING_MODULE
 
 module scaling_module (
-    input wire [7:0] scale,                 // scale in FP8 (E4M3)
-    input wire [383:0] partial_sum,         // 16 * 24-bit input
-    output wire [639:0] scaled_sum          // 16 * 40-bit output
+    input  wire [7:0]   scale,                 // scale in FP8 (E4M3)
+    input  wire [383:0] partial_sum,           // 16 * 24-bit input
+    output wire [639:0] scaled_sum             // 16 * 40-bit output
 );
 
     // FP8 decoding
@@ -275,10 +276,10 @@ module scaling_module (
     wire [3:0]  exp  = scale[6:3];           // exponent with bias 7
     wire [2:0]  mant = scale[2:0];           // mantissa (fractional)
 
-    // Convert FP8 to fixed-point Q4.12
+    // Convert FP8 to fixed-point Q8.8
     wire [15:0] scale_fixed;
-    wire [11:0] frac_part = {mant, 9'b0};        // mantissa in Q0.12
-    wire [15:0] base = 16'h1000 + frac_part;     // 1 + mant in Q4.12 = 0x1000 + frac_part
+    wire [7:0] frac_part = {mant, 5'b0};        // mantissa in Q8.8
+    wire [15:0] base = 16'h0100 + frac_part;     // 1 + mant in Q8.8 = 0x0100 + frac_part
     wire [4:0]  shift = (exp >= 7) ? (exp - 7) : (7 - exp);
 
     wire [15:0] scaled_val_temp;
@@ -290,8 +291,7 @@ module scaling_module (
     generate
         for (j = 0; j < 16; j = j + 1) begin: SCALING
             wire signed [23:0] in_val = partial_sum[(j * 24) +: 24];
-            wire signed [31:0] scale_sq = ($signed(scale_fixed) * $signed(scale_fixed)) >>> 12;
-            wire signed [39:0] product = (in_val * scale_sq) >>> 12;
+            wire signed [39:0] product = (in_val * $signed(scale_fixed) * $signed(scale_fixed)) >>> 16;
             assign scaled_sum[(j * 40) +: 40] = product;
         end
     endgenerate
@@ -304,8 +304,8 @@ endmodule
 `define BIASING_MODULE
 
 module biasing_module (
-    input wire [7:0] bias,
-    input wire [639:0] scaled_sum,
+    input  wire [7:0]   bias,
+    input  wire [639:0] scaled_sum,
     output wire [639:0] biased_sum
 );
 
@@ -325,7 +325,7 @@ endmodule
 `define RELU_MODULE
 
 module relu_module (
-    input wire [639:0] biased_sum,
+    input  wire [639:0] biased_sum,
     output wire [639:0] relu_sum
 );
 
@@ -344,16 +344,16 @@ endmodule
 `define TRUNCATION_MODULE
 
 module truncation_module (
-    input wire [639:0] relu_sum,
+    input  wire [639:0] relu_sum,
     output wire [295:0] truncated_sum
 );
 
     genvar j;
     generate
         for (j = 0; j < 16; j = j + 1) begin: TRUNCATION
-            assign truncated_sum[(j * 18) +: 18] = relu_sum[(j * 40) + 39 -: 18]; // Truncate to 18 bits
+            assign truncated_sum[(j * 16) +: 16] = relu_sum[(j * 40) + 39 -: 16]; // Truncate to high 16 bits
         end
-        assign truncated_sum[295:288] = 8'b0; // Padding to 296 bits
+        assign truncated_sum[295:256] = 40'b0; // Padding to 296 bits
     endgenerate
 endmodule
 
@@ -363,14 +363,15 @@ endmodule
 `define MAX_MODULE
 
 module max_module(
-    input wire clk,
-    input wire rst_n,
-    input wire read_en,
-    input wire [295:0] from_latch_array,
-    output wire [17:0] vec_max_wire
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire         latch_en,
+    input  wire [639:0] from_relu,
+    input  wire [295:0] from_latch_array,
+    output wire [15:0]  vec_max_wire
 );
 
-    reg [17:0] vec_max;
+    reg [15:0] vec_max;
     integer i;
 
     assign vec_max_wire = vec_max;
@@ -379,10 +380,11 @@ module max_module(
         if (!rst_n) begin
             vec_max <= 0;
         end
-        else if (read_en) begin
+        // else if ()
+        else if (latch_en) begin
             for (i = 0; i < 16; i = i + 1) begin
-                if (from_latch_array[(i * 18) +: 18] > vec_max) begin
-                    vec_max <= from_latch_array[(i * 18) +: 18];
+                if (from_latch_array[(i * 16) +: 16] > vec_max) begin
+                    vec_max <= from_latch_array[(i * 16) +: 16];
                 end
             end
         end
