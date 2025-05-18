@@ -10,8 +10,8 @@ module ppu (
     input wire [7:0] bias,
     input wire valid,
     output wire [639:0] scaled_sum_wire,
-    output wire [17:0] vec_max_wire,
-    output wire [17:0] reciprocal_wire,
+    output wire [15:0] vec_max_wire,
+    output wire [15:0] reciprocal_wire,
     output wire [135:0] quantized_data_wire,
     output wire [127:0] output_data,
     output wire done_wire
@@ -182,13 +182,13 @@ module ppu (
                         quantized_data[i*8 +: 8] <= temp_val[i][7:0];
                     end
                 end
-                quantized_data[135:128] <= reciprocal_wire[17:9];
+                quantized_data[135:128] <= 8'd255;
                 quantization_done <= 1'b1;
                 buffer <= 0;
             end
             else if (buffer == 2) begin
                 for (i = 0; i < 16; i = i + 1) begin
-                    temp_val[i] <= ((from_latch_array[i*18 +: 18] * reciprocal_wire) >> 13);
+                    temp_val[i] <= ((from_latch_array[i*16 +: 16] * reciprocal_wire) >> 6);
                 end
                 buffer <= buffer + 1;
             end
@@ -291,7 +291,7 @@ module scaling_module (
     generate
         for (j = 0; j < 16; j = j + 1) begin: SCALING
             wire signed [23:0] in_val = partial_sum[(j * 24) +: 24];
-            wire signed [39:0] product = (in_val * $signed(scale_fixed) * $signed(scale_fixed)) >>> 16;
+            wire signed [39:0] product = ((in_val * $signed(scale_fixed) >>> 8) * $signed(scale_fixed)) >>> 8;
             assign scaled_sum[(j * 40) +: 40] = product;
         end
     endgenerate
@@ -404,8 +404,8 @@ module reciprocal_module(
     input wire clk,
     input wire rst_n,
     input wire latch_done,
-    input wire [17:0] vec_max_wire,
-    output wire [17:0] reciprocal_wire,
+    input wire [15:0] vec_max_wire,
+    output wire [15:0] reciprocal_wire,
     output wire reciprocal_done_wire
 );
 
@@ -420,7 +420,7 @@ module reciprocal_module(
             reciprocal_done <= 1'b0;
         end
         else if (latch_done) begin
-            reciprocal <= (vec_max_wire == 0) ? 18'hffff : (255 << 13)/ vec_max_wire;
+            reciprocal <= (vec_max_wire == 0) ? 18'hffff : (255 << 6)/ vec_max_wire;
             reciprocal_done <= 1'b1;
         end
         else begin
@@ -440,7 +440,7 @@ module approx_softmax_module (
     input  wire         clk,
     input  wire         rst_n,
     input  wire [127:0] quantized_data_wire,
-    input  wire [7:0]   vec_max_wire,
+    input  wire [15:0]   vec_max_wire,
     input  wire         softmax_en,
     output wire [127:0] approx_softmax_wire,
     output wire         approx_softmax_done_wire
