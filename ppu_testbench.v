@@ -86,3 +86,67 @@ module tb;
 
     
 endmodule
+
+module tb_for_softmax;
+
+    reg          clk;
+    reg          rst_n;
+    reg          start;
+    reg  [127:0] quantized_data;
+    reg  [7:0]   vec_max;
+
+    wire [7:0]   vec_max_wire = vec_max;
+    wire [127:0] quantized_data_wire = quantized_data;
+    wire [127:0] approx_softmax_wire;
+    wire         approx_softmax_done_wire;
+
+    integer i;
+
+    approx_softmax_module uut_2(
+        .clk(clk),
+        .rst_n(rst_n),
+        .quantized_data_wire(quantized_data_wire),
+        .vec_max_wire(vec_max_wire),
+        .softmax_en(start),
+        .approx_softmax_wire(approx_softmax_wire),
+        .approx_softmax_done_wire(approx_softmax_done_wire)
+    );
+
+    always #5 clk = ~clk;
+
+    initial begin
+
+        $fsdbDumpfile("simulation_2.fsdb");
+        $fsdbDumpvars(0, tb_for_softmax);
+
+        clk = 0;
+        rst_n = 0;
+        quantized_data = 0;
+        start = 0;
+        vec_max = 0;
+
+        #10;
+
+        quantized_data = {8'd120, 8'd120, 8'd121, 8'd121, 8'd122, 8'd122, 8'd123, 8'd123, 8'd124, 8'd124, 8'd125, 8'd125, 8'd126, 8'd126, 8'd127, 8'd127};
+        vec_max = 8'd127;
+        start = 1;
+        rst_n = 1;
+        for (i = 0; i < 16; i = i + 1) begin
+            $display("The %dth quantized data is %d", i, quantized_data[i * 8 +: 8]);
+        end
+
+        #50;
+        start = 0;
+
+    end
+
+    always @(posedge clk) begin
+        if (approx_softmax_done_wire) begin
+            for (i = 0; i < 16; i = i + 1) begin
+                $display("The %dth approximate softmax value is %d", i, approx_softmax_wire[i * 8 +: 8]);
+            end
+            $finish;
+        end
+    end
+    
+endmodule

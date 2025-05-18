@@ -494,7 +494,7 @@ module approx_softmax_module (
                 DIV: begin
                     for (i = 0; i < 16; i = i + 1) begin
                         if (exp_sum != 0) begin
-                            softmax_val[i] <= (shift_val[i] << 8) / exp_sum;
+                            softmax_val[i] <= (shift_val[i] * 255) / exp_sum;
                         end
                         else softmax_val[i] <= 0;
                     end
