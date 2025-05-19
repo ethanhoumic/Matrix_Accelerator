@@ -53,7 +53,7 @@ module tb;
         /* Input datas in mac are (4900, 5600) * (2800, 6300) and (42000, 49000) * (3500, 5600),
            so the quantized data in sram should be (6, 7) * (3, 7) and (6, 7) * (4, 7),
            the per vector scale factor are (800, 900) and (7000, 800)
-           and second quantization yields gamma = 0.101237 = 0x65 in fp8,
+           and second quantization yields gamma = 55.11811024 = 0x65 in fp8,
            so the scales are (14, 16) and (127, 14). 
            Hence, in sram, the data should be (6, 7, 14) * (3, 7, 16) and (6, 7, 127) * (4, 7, 14), while gamma = 0x65
            The output of mac should be (6 * 3 + 7 * 7) * 14 * 16 = 15008 and (6 * 4 + 7 * 7) * 127 * 14 = 129794,
@@ -71,9 +71,9 @@ module tb;
         bias = 8'd1;
         valid = 1;
 
-        $display("partial_sum = %d", partial_sum[23:0]);
-        $display("scale = %b", scale);
-        $display("bias = %b", bias);
+        $display("inputs are %d and %d", partial_sum[383:360], partial_sum[23:0]);
+        $display("scale = %d", scale);
+        $display("bias = %d", bias);
 
         #50;
         valid = 0;
@@ -82,7 +82,7 @@ module tb;
 
     always @(posedge clk) begin
         if (done) begin
-            $display("The scaled sum is %d", scaled_sum_wire[39:0]);
+            $display("The scaled sums are %d and %d", scaled_sum_wire[639:600], scaled_sum_wire[39:0]);
             $display("The maximal element is %d", vec_max);
             $display("The per vector scale factor is %d", reciprocal_wire);
             for (i = 0; i < 16; i = i + 1) begin
