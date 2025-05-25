@@ -2,20 +2,29 @@
 `ifndef MAC_16
 `define MAC_16
 
-module mac_16 (
-    input wire clk,
-    input wire rst_n,
-    input wire[4223:0] a_vec,
-    input wire[263:0] b_vec,
-    input wire is_int8_mode,
-    input wire is_int4_mode,
-    input wire is_vsq,
-    output reg [6143:0] latch_array_out
+module mac_16 #(
+    parameter CALC_BIT_WIDTH, // Width of the counter
+    parameter CALC_COUNT   // Number of cycles for the calculation
+)(
+    input  wire          clk,
+    input  wire          rst_n,
+    input  wire [4223:0] a_vec,
+    input  wire [263:0]  b_vec,
+    input  wire          is_int8_mode,
+    input  wire          is_int4_mode,
+    input  wire          is_vsq,
+    input  wire          valid,
+    input  wire [383:0]  partial_sum_in,
+    output wire [383:0]  partial_sum_out,
+    output wire          mac_done_wire,
+    output wire          calc_done_wire
 );
-
-    reg [23:0] partial_sum_out [0:15];
-    wire [23:0] partial_sum_in [0:15];
-    reg [3:0] counter, counter_next;
+    reg mac_done;
+    reg calc_done;
+    reg [CALC_BIT_WIDTH:0] calc;
+    reg state;
+    assign mac_done_wire = mac_done;
+    assign calc_done_wire = calc_done;
 
     genvar i;
     generate
@@ -23,43 +32,41 @@ module mac_16 (
             MAC_datapath mac_inst(
                 .a_vec(a_vec[i * 264  + 263 -: 264]),
                 .b_vec(b_vec),
-                .is_int4_mode(is_int4_mode),
                 .is_int8_mode(is_int8_mode),
+                .is_int4_mode(is_int4_mode),
                 .is_vsq(is_vsq),
-                .partial_sum_in(partial_sum_out[i]),
-                .partial_sum_out(partial_sum_in[i])
+                .partial_sum_in(partial_sum_in[i * 24 + 23 -: 24]),
+                .partial_sum_out(partial_sum_out[i * 24 + 23 -: 24])
             );
         end
     endgenerate
 
+    localparam IDLE = 0, CALC = 1;
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            counter <= 4'b0000;
+            calc <= 0;
+            state <= IDLE;
+            mac_done <= 0;
+            calc_done <= 0;
         end
         else begin
-            if (counter == 4'b1111)
-                counter <= 4'b0000;
-            else
-                counter <= counter + 1;
-        end
-    end
-
-    integer j;
-    always @(*) begin
-        if (!rst_n) begin     // reset 
-            for (j = 0; j < 16; j = j + 1) begin
-                partial_sum_out[j] = 24'b0;
+            if (calc == CALC_COUNT - 1) begin
+                state <= IDLE;
+                calc <= 0;
+                calc_done <= 1; // Signal that calculation is done
+                mac_done <= 0; // Reset mac_done for the next cycle
             end
-            latch_array_out = 6144'b0;
-        end
-        else if (!clk) begin    // neg clk latch
-            for (j = 0; j < 16; j = j + 1) begin
-                latch_array_out[j * 384 + counter * 24 + 23 -: 24] = partial_sum_in[j];
+            else if (state == IDLE && valid) begin
+                state <= CALC;
+                mac_done <= 1;
             end
-        end
-        else if (clk) begin     // pos clk latch
-            for (j = 0; j < 16; j = j + 1) begin
-                partial_sum_out[j] = latch_array_out[j * 384 + counter * 24 + 23 -: 24];
+            else if (state == CALC) begin
+                calc <= calc + 1; // Increment the counter
+            end
+            else begin
+                state <= state;
+                calc <= calc;
             end
         end
     end
@@ -72,13 +79,13 @@ endmodule
 `define MAC_DATAPATH
 
 module MAC_datapath (
-    input wire[263:0] a_vec,
-    input wire[263:0] b_vec,
-    input wire is_int8_mode,
-    input wire is_int4_mode,
-    input wire is_vsq,
-    input wire [23:0] partial_sum_in,
-    output reg [23:0] partial_sum_out
+    input  wire [263:0] a_vec,
+    input  wire [263:0] b_vec,
+    input  wire is_int8_mode,
+    input  wire is_int4_mode,
+    input  wire is_vsq,
+    input  wire [23:0] partial_sum_in,
+    output wire [23:0] partial_sum_out
 );
 
     wire [23:0] partial_sum_int8;
@@ -108,11 +115,86 @@ module MAC_datapath (
         .partial_sum_out(partial_sum_vsq)
     );
 
-    always @(*) begin
-        if (is_int8_mode) partial_sum_out = partial_sum_int8;
-        else if (is_int4_mode) partial_sum_out = partial_sum_int4;
-        else if (is_vsq) partial_sum_out = partial_sum_vsq;
-        else partial_sum_out = 24'b0; 
+    assign partial_sum_out = is_int8_mode ? partial_sum_int8 :
+                             is_int4_mode ? partial_sum_int4 :
+                             is_vsq       ? partial_sum_vsq  :
+                                          24'b0;
+
+endmodule
+
+`endif
+
+`ifndef ACC_COLLECTOR
+`define ACC_COLLECTOR
+
+module acc_collector (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire         start,
+    input  wire         ppu,            // all MAC done
+    input  wire         mac_done,       // MAC one calculation done
+    input  wire [383:0] partial_sum_in,
+    output wire [383:0] to_mac,
+    output wire [383:0] to_ppu,
+    output wire         done_wire       // PPU done
+);
+
+    reg [383:0] latch_array [0:15];
+    reg [3:0]   addr;
+    reg [1:0]   state;
+    reg         done;
+
+    assign done_wire = done;
+
+    localparam IDLE = 2'b00,
+               MAC  = 2'b01,
+               PPU  = 2'b10;
+
+    assign to_mac = (state == MAC) ? latch_array[addr] : 384'b0;
+    assign to_ppu = (state == PPU) ? latch_array[addr] : 384'b0;
+
+    integer i;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            addr  <= 0;
+            state <= IDLE;
+            done  <= 0;
+            for (i = 0; i < 16; i = i + 1)
+                latch_array[i] <= 384'b0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (start) begin
+                        state <= MAC;
+                        addr  <= 0;
+                    end
+                end
+
+                MAC: begin
+                    if (mac_done) begin
+                        latch_array[addr] <= partial_sum_in;
+                        addr <= (addr == 15) ? 0 : addr + 1;
+                    end
+
+                    if (ppu) begin
+                        state <= PPU;
+                        addr  <= 0;
+                    end
+                end
+
+                PPU: begin
+                    if (addr == 15) begin
+                        state <= IDLE;
+                        addr  <= 0;
+                        done  <= 1; // Signal that PPU is done
+                    end 
+                    else begin
+                        addr <= addr + 1;
+                    end
+                end
+            endcase
+        end
     end
 
 endmodule

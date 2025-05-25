@@ -37,7 +37,7 @@ module int8_mac (
         a[32] * b[32]
     ) & 21'b111111111111111111111; // Mask to 21 bits
 
-    assign partial_sum_out = (partial_sum_in & int8_en) + mult_sum;
+    assign partial_sum_out = (int8_en) ? (partial_sum_in + mult_sum) : 0;
 
 endmodule
 

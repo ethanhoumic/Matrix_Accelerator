@@ -3,10 +3,10 @@
 `define VSQ_SUPPORT
 
 module vsq_support (
-    input wire is_vsq,
-    input wire [7:0] a_factor,
-    input wire [7:0] b_factor,
-    input wire [13:0] partial_sum_in,
+    input  wire        is_vsq,
+    input  wire [7:0]  a_factor,
+    input  wire [7:0]  b_factor,
+    input  wire [23:0] partial_sum_in,
     output wire [23:0] partial_sum_out
 );
 
