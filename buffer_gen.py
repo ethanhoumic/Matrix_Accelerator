@@ -1,8 +1,8 @@
 import random
 from collections import deque
 
-A_PATTERN = 4
-B_PATTERN = 5
+A_PATTERN = 24
+B_PATTERN = 24
 HEIGHT = 32
 A_FILE = 'a_sram_binary.txt'
 B_FILE = 'b_sram_binary.txt'
@@ -56,8 +56,39 @@ def generate_output(file, pattern_a, pattern_b, height, mode):
     else:
         raise ValueError("mode must be either 'int8' or 'int4'")
 
+def generate_linear_pattern(file, start, end, step, mode, scale_factor=0):
+    """Generate a linear pattern buffer."""
+    if mode == 'int8':
+        with open(file, 'w') as f:
+            if (end - start + 1) / step != 32:
+                raise ValueError("The range must be evenly divisible by 32 for int8 mode")
+            for h in range(HEIGHT):
+                pattern_bin = ''
+                for value in range(start, end, step):
+                    if not (-128 <= value <= 127):
+                        raise ValueError("value must be between -128 and 127 for signed int8 mode")
+                    pattern_bin += format((value + (1 << 8)) % (1 << 8), '08b')
+                full_pattern = pattern_bin + '00000000'
+                f.write(full_pattern + '\n')
+
+    elif mode == 'int4':
+        with open(file, 'w') as f:
+            if (end - start + 1) / step != 64:
+                raise ValueError("The range must be evenly divisible by 64 for int4 mode")
+            for h in range(HEIGHT):
+                pattern_bin = ''
+                for value in range(start, end, step):
+                    if not (-8 <= value <= 7):
+                        raise ValueError("value must be between -8 and 7 for signed int4 mode")
+                    pattern_bin = format((value + (1 << 4)) % (1 << 4), '04b')
+                scale_bin = format(scale_factor, '08b')
+                repeated = pattern_bin + scale_bin
+                f.write(repeated + '\n')
+
+    else:
+        raise ValueError("mode must be either 'int8' or 'int4'")
+
 # 主流程
 if __name__ == '__main__':
-    generate_buffer(A_FILE, A_PATTERN, HEIGHT, 'int8')
-    generate_buffer(B_FILE, B_PATTERN, HEIGHT, 'int8')
-    generate_output(OUTPUTFILE, A_PATTERN, B_PATTERN, HEIGHT, 'int8')
+    generate_linear_pattern(A_FILE, 1, 32, 1, 'int8')
+    generate_linear_pattern(B_FILE, 1, 32, 1, 'int8')

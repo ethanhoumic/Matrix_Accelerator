@@ -1,10 +1,13 @@
 `timescale 1 ns/1 ps
+`include "int4_mac.v"
+`include "int8_mac.v"
+`include "vsq_support.v"
 `ifndef MAC_16
 `define MAC_16
 
 module mac_16 #(
-    parameter CALC_BIT_WIDTH, // Width of the counter
-    parameter CALC_COUNT   // Number of cycles for the calculation
+    parameter CALC_BIT_WIDTH = 5, // Width of the counter
+    parameter CALC_COUNT = 32     // Number of cycles for the calculation
 )(
     input  wire          clk,
     input  wire          rst_n,
