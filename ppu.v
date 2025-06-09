@@ -29,6 +29,7 @@ module ppu (
     wire    [639:0] biased_sum;
     wire    [639:0] relu_sum;
     wire    [295:0] truncated_sum;
+    wire            reciprocal_done_wire;
     genvar  j;
 
     // scaling module
