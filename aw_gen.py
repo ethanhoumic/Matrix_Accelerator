@@ -34,8 +34,50 @@ def quantize_tensor(tensor, num_bits=8):
     tensor_q = np.clip(tensor_q, qmin, qmax)
     return tensor_q, scale
 
-def save_quantized_matrix(path, matrix):
-    np.savetxt(path, matrix, fmt='%d')
+def save_tensor_hex(file_path, tensor_q, num_bits=8):
+    assert num_bits in [8, 4], "Only supports 8-bit or 4-bit binary export"
+
+    tensor_q = np.array(tensor_q)
+    rows, cols = tensor_q.shape
+
+    # Padding to 65 x 65
+    padded = np.zeros((65, 65), dtype=np.int8)
+    padded[:rows, :cols] = tensor_q[:65, :65]  # If input > 65, crop it
+
+    with open(file_path, 'w') as f:
+        for row in padded:
+            bin_line = ['{:08b}'.format(np.uint8(x)) for x in row]
+            f.write(' '.join(bin_line) + '\n')
+
+    print(f"Saved binary padded tensor (65x65) to {file_path}")
+
+import numpy as np
+
+def save_65x65_mixed_binary(filepath, matrix):
+
+    matrix = np.array(matrix)
+    rows, cols = matrix.shape
+    padded = np.zeros((65, 65), dtype=np.int8)
+    padded[:rows, :cols] = matrix[:65, :65]  # If input > 65, crop it
+
+    padded = np.array(padded, dtype=np.float32)
+    assert padded.shape == (65, 65)
+
+    with open(filepath, 'w') as f:
+        for row in range(65):
+            for col in range(65):
+                val = padded[row, col]
+
+                if row == 64 or col == 64:
+                    # int8
+                    val_i8 = int(np.clip(np.round(val), -128, 127))
+                    f.write(f"{np.uint8(val_i8):08b}\n")
+                else:
+                    # int4 (4-bit output only)
+                    val_i4 = int(np.clip(np.round(val), -8, 7)) & 0xF
+                    f.write(f"{val_i4:04b}\n")
+
+    print(f"Saved mixed 65x65 binary to {filepath}")
 
 # saving the scale
 def float_to_fp8(x):
@@ -153,22 +195,22 @@ save_matrix_txt(C_softmax, "./data_files/C_softmax.txt")
 # save quantized matrices
 A_quantized_int8, A_int8_scale= quantize_tensor(A, num_bits=8)
 B_quantized_int8, B_int8_scale= quantize_tensor(A, num_bits=8)
-save_quantized_matrix("./data_files/A_int8.txt", A_quantized_int8)
-save_quantized_matrix("./data_files/B_int8.txt", B_quantized_int8)
+save_tensor_hex("./data_files/A_int8.txt", A_quantized_int8)
+save_tensor_hex("./data_files/B_int8.txt", B_quantized_int8)
 save_fp8_txt(127/A_int8_scale, "./data_files/A_int8_fp8.txt")
 save_fp8_txt(127/B_int8_scale, "./data_files/B_int8_fp8.txt")
 
 A_quantized_int4, A_int4_scale = quantize_tensor(A, num_bits=4)
 B_quantized_int4, B_int4_scale = quantize_tensor(B, num_bits=4)
-save_quantized_matrix("./data_files/A_int4.txt", A_quantized_int4)
-save_quantized_matrix("./data_files/B_int4.txt", B_quantized_int4)
+save_65x65_mixed_binary("./data_files/A_int4.txt", A_quantized_int4)
+save_65x65_mixed_binary("./data_files/B_int4.txt", B_quantized_int4)
 save_fp8_txt(7/A_int4_scale, "./data_files/A_int4_fp8.txt")
 save_fp8_txt(7/B_int4_scale, "./data_files/B_int4_fp8.txt")
 
 A_quantized_int4_vsq, A_int4_scale_vsq = quantize_per_row_int4_with_scale_append(A)
 B_quantized_int4_vsq, B_int4_scale_vsq = quantize_per_col_int4_with_scale_append(B)
-save_quantized_matrix("./data_files/A_int4_vsq.txt", A_quantized_int4_vsq)
-save_quantized_matrix("./data_files/B_int4_vsq.txt", B_quantized_int4_vsq)
+save_65x65_mixed_binary("./data_files/A_int4_vsq.txt", A_quantized_int4_vsq)
+save_65x65_mixed_binary("./data_files/B_int4_vsq.txt", B_quantized_int4_vsq)
 print(A_int4_scale_vsq)
 print(B_int4_scale_vsq)
 save_fp8_txt(A_int4_scale_vsq, "./data_files/A_vsq_fp8.txt")
