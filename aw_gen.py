@@ -55,29 +55,31 @@ import numpy as np
 
 def save_65x65_mixed_binary(filepath, matrix):
 
-    matrix = np.array(matrix)
-    rows, cols = matrix.shape
-    padded = np.zeros((65, 65), dtype=np.int8)
-    padded[:rows, :cols] = matrix[:65, :65]  # If input > 65, crop it
+    tensor_q = np.array(matrix)
+    rows, cols = tensor_q.shape
 
-    padded = np.array(padded, dtype=np.float32)
-    assert padded.shape == (65, 65)
+    # Padding to 65 x 65
+    padded = np.zeros((65, 65), dtype=np.int8)
+    padded[:rows, :cols] = tensor_q[:65, :65]  # If input > 65, crop it
+
+    matrix = np.array(padded, dtype=np.float32)
+    assert matrix.shape == (65, 65)
 
     with open(filepath, 'w') as f:
-        for row in range(65):
-            for col in range(65):
-                val = padded[row, col]
+        for row_idx in range(65):
+            for col_idx in range(65):
+                val = matrix[row_idx, col_idx]
 
-                if row == 64 or col == 64:
+                if row_idx == 64 or col_idx == 64:
                     # int8
                     val_i8 = int(np.clip(np.round(val), -128, 127))
                     f.write(f"{np.uint8(val_i8):08b}\n")
                 else:
-                    # int4 (4-bit output only)
+                    # int4
                     val_i4 = int(np.clip(np.round(val), -8, 7)) & 0xF
-                    f.write(f"{val_i4:04b}\n")
+                    f.write(f"0000{val_i4:04b}\n")  # 高 4 bit 補 0，低 4 bit 放資料
 
-    print(f"Saved mixed 65x65 binary to {filepath}")
+    print(f"Saved unpacked 65x65 binary to {filepath}")
 
 # saving the scale
 def float_to_fp8(x):
