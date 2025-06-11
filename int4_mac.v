@@ -7,6 +7,7 @@ module int4_mac (
     input  wire        [263:0] a_vec,
     input  wire        [263:0] b_vec,
     input  wire signed [23:0]  partial_sum_in,
+    output wire signed [13:0]  to_vsq,
     output wire signed [23:0]  partial_sum_out
 );
 
@@ -29,11 +30,11 @@ module int4_mac (
         end
     endgenerate
 
-    wire signed [23:0] sum_lvl1 [0:15];
-    wire signed [23:0] sum_lvl2 [0:7];
-    wire signed [23:0] sum_lvl3 [0:3];
-    wire signed [23:0] sum_lvl4 [0:1];
-    wire signed [23:0] sum_final;
+    wire signed [13:0] sum_lvl1 [0:15];
+    wire signed [13:0] sum_lvl2 [0:7];
+    wire signed [13:0] sum_lvl3 [0:3];
+    wire signed [13:0] sum_lvl4 [0:1];
+    wire signed [13:0] sum_final;
 
     generate
         for (j = 0; j < 16; j = j + 1)
@@ -50,6 +51,7 @@ module int4_mac (
     endgenerate
 
     assign sum_final = sum_lvl4[0] + sum_lvl4[1];
+    assign to_vsq = sum_final;;
 
     // output
     assign partial_sum_out = int4_en ? (partial_sum_in + sum_final) : 24'sd0;

@@ -30,14 +30,12 @@ module matrix_accelerator #(
     wire         mac_done_wire;
     wire         acc_done_wire;
     wire         ppu;
+    wire         stall;
     wire [383:0] to_ppu_wire;
     wire [383:0] partial_sum_in;
     wire [383:0] partial_sum_out;
 
-    mac_16 #(
-        .CALC_BIT_WIDTH(CALC_BIT_WIDTH),
-        .CALC_COUNT(CALC_COUNT)
-    ) mac_inst (
+    mac_16 mac_inst (
         .clk(clk),
         .rst_n(rst_n),
         .a_vec(a_vec),
@@ -47,6 +45,7 @@ module matrix_accelerator #(
         .is_vsq(is_vsq),
         .valid(valid_mac),
         .partial_sum_in(partial_sum_in),
+        .stall(stall),
         .partial_sum_out(partial_sum_out),
         .mac_done_wire(mac_done_wire),
         .calc_done_wire(ppu)

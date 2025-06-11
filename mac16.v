@@ -5,10 +5,7 @@
 `ifndef MAC_16
 `define MAC_16
 
-module mac_16 #(
-    parameter CALC_BIT_WIDTH = 5, // Width of the counter
-    parameter CALC_COUNT = 32     // Number of cycles for the calculation
-)(
+module mac_16 (
     input  wire          clk,
     input  wire          rst_n,
     input  wire [4223:0] a_vec,
@@ -18,16 +15,25 @@ module mac_16 #(
     input  wire          is_vsq,
     input  wire          valid,
     input  wire [383:0]  partial_sum_in,
+    output wire          stall,
     output wire [383:0]  partial_sum_out,
     output wire          mac_done_wire,
-    output wire          calc_done_wire
+    output wire          calc_done_wire   // signal that acc is full, output to ppu
 );
+
+    localparam IDLE = 0, CALC = 1, STALL = 2, DONE = 3;
+
     reg mac_done;
     reg calc_done;
-    reg [CALC_BIT_WIDTH:0] calc;
-    reg state;
+    reg assign_stall;
+    reg [5:0] calc_int8;
+    reg [4:0] calc_int4;
+    reg [1:0] state;
+    reg [3:0] block_counter;
+    reg [3:0] output_counter;
     assign mac_done_wire = mac_done;
     assign calc_done_wire = calc_done;
+    assign stall = (state == STALL || state == DONE || assign_stall);
 
     genvar i;
     generate
@@ -44,32 +50,104 @@ module mac_16 #(
         end
     endgenerate
 
-    localparam IDLE = 0, CALC = 1;
-
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            calc <= 0;
+            calc_int8 <= 0;
+            calc_int4 <= 0;
             state <= IDLE;
             mac_done <= 0;
             calc_done <= 0;
+            block_counter <= 0;
+            output_counter <= 0;
+            assign_stall <= 0;
         end
         else begin
-            if (calc == CALC_COUNT - 1) begin
-                state <= IDLE;
-                calc <= 0;
-                calc_done <= 1; // Signal that calculation is done
-                mac_done <= 0; // Reset mac_done for the next cycle
+            if (is_int8_mode) begin
+                if (state == DONE) begin
+                    calc_done <= 0;
+                    mac_done <= 0;
+                    state <= DONE;
+                end
+                else if (state == STALL) begin
+                    if (output_counter == 15) begin
+                        output_counter <= 0;
+                        calc_done <= 0;
+                        state <= CALC;
+                        mac_done <= 1;
+                        calc_int8 <= 0;
+                    end
+                    else output_counter <= output_counter + 1;
+                end
+                else begin
+                    if (calc_int8 == 31) begin
+                        if (block_counter == 7) begin
+                            state <= DONE;
+                            calc_int8 <= 0;
+                            calc_done <= 1; // Signal that calculation is done
+                            mac_done <= 0; // Reset mac_done for the next cycle
+                        end
+                        else begin
+                            state <= STALL;
+                            calc_done <= 1;
+                            block_counter <= block_counter + 1; // Increment block counter
+                        end
+                    end
+                    else if (state == IDLE && valid) begin
+                        state <= CALC;
+                        mac_done <= 1;
+                    end
+                    else if (state == CALC) begin
+                        calc_int8 <= calc_int8 + 1; // Increment the counter
+                    end
+                    else begin
+                        state <= state;
+                        calc_int8 <= calc_int8;
+                    end
+                end
             end
-            else if (state == IDLE && valid) begin
-                state <= CALC;
-                mac_done <= 1;
-            end
-            else if (state == CALC) begin
-                calc <= calc + 1; // Increment the counter
-            end
-            else begin
-                state <= state;
-                calc <= calc;
+            else if (is_int4_mode || is_vsq) begin
+                if (state == DONE) begin
+                    calc_done <= 0;
+                    mac_done <= 0;
+                    state <= DONE;
+                    assign_stall <= 1;
+                end
+                else if (state == STALL) begin
+                    if (output_counter == 15) begin
+                        output_counter <= 0;
+                        calc_done <= 0;
+                        state <= CALC;
+                        mac_done <= 1;
+                        calc_int4 <= 0;
+                    end
+                    else output_counter <= output_counter + 1;
+                end
+                else begin
+                    if (calc_int4 == 15) begin
+                        if (block_counter == 3) begin
+                            state <= DONE;
+                            calc_int4 <= 0;
+                            calc_done <= 1; // Signal that calculation is done
+                            mac_done <= 0; // Reset mac_done for the next cycle
+                        end
+                        else begin
+                            state <= STALL;
+                            calc_done <= 1;
+                            block_counter <= block_counter + 1;
+                        end
+                    end
+                    else if (state == IDLE && valid) begin
+                        state <= CALC;
+                        mac_done <= 1;
+                    end
+                    else if (state == CALC) begin
+                        calc_int4 <= calc_int4 + 1; // Increment the counter
+                    end
+                    else begin
+                        state <= state;
+                        calc_int4 <= calc_int4;
+                    end
+                end
             end
         end
     end
@@ -94,6 +172,7 @@ module MAC_datapath (
     wire [23:0] partial_sum_int8;
     wire [23:0] partial_sum_int4;
     wire [23:0] partial_sum_vsq;
+    wire [13:0] to_vsq;
 
     int8_mac int8_inst(
         .int8_en(is_int8_mode),
@@ -108,12 +187,14 @@ module MAC_datapath (
         .a_vec(a_vec),
         .b_vec(b_vec),
         .partial_sum_in(partial_sum_in),
+        .to_vsq(to_vsq),
         .partial_sum_out(partial_sum_int4)
     );
     vsq_support vsq_inst(
         .is_vsq(is_vsq),
         .a_factor(a_vec[7:0]),
         .b_factor(b_vec[7:0]),
+        .from_int4(to_vsq), // Assuming from_int4 is 14 bits
         .partial_sum_in(partial_sum_in),
         .partial_sum_out(partial_sum_vsq)
     );
@@ -134,7 +215,7 @@ module acc_collector (
     input  wire         clk,
     input  wire         rst_n,
     input  wire         start,
-    input  wire         ppu,            // all MAC done
+    input  wire         ppu,            // one tile done
     input  wire         mac_done,       // MAC one calculation done
     input  wire [383:0] partial_sum_in,
     output wire [383:0] to_mac,
@@ -171,6 +252,7 @@ module acc_collector (
                     if (start) begin
                         state <= MAC;
                         addr  <= 0;
+                        done <= 0;   // Reset done signal, cal for this tile isn't finished
                     end
                 end
 
