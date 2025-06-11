@@ -543,14 +543,13 @@ module tb ;
 
         #5000;
 
-        $finish;
+        // $finish;
 
 
     end
 
     always @(posedge clk or negedge rst_n) begin
 
-        // -----------------------------Reset-------------------------------
         if (stall) output_en <= 1;
         else output_en <= 0;
         if (!rst_n) begin
