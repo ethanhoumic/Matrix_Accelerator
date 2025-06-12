@@ -7,16 +7,17 @@ Please make sure the below hierarchy is satisfied:
 
 <pre>
 ├── data_files
-    ├──── A_correct.txt
-    ├──── A_int4_fp8.txt
-    ├──── A_int4_vsq.txt
-    ├──── A_int4.txt
-    ├──── A_int8_fp8.txt
-    ├──── A_int8.txt
-    ├──── A_vsq_fp8.txt
-    ├──── (all above files with A replaced by B)
-    ├──── bias_int4.txt
-    ├──── bias_int8.txt
+│    ├──── A_correct.txt
+│    ├──── A_int4_fp8.txt
+│    ├──── A_int4_vsq.txt
+│    ├──── A_int4.txt
+│    ├──── A_int8_fp8.txt
+│    ├──── A_int8.txt
+│    ├──── A_vsq_fp8.txt
+│    ├──── (all above files with A replaced by B)
+│    ├──── bias_int4.txt
+│    ├──── bias_int8.txt
+│    └──── cmd.txt
 ├── final_testbench.v
 ├── mac_16.v
 ├── int4_mac.v
