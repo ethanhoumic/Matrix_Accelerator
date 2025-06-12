@@ -117,8 +117,12 @@ def float_to_fp8(x):
     return fp8_vals
 
 def save_fp8_txt(fp, path):
-    fp8 = float_to_fp8(fp)
-    np.savetxt(path, fp8, fmt='%d')
+    fp8 = float_to_fp8(fp)  # uint8 array from float32 input
+    with open(path, 'w') as f:
+        for val in fp8:
+            bin_str = f'{val:08b}'  # format as 8-bit binary
+            f.write(bin_str + '\n')
+    print(f"Saved FP8 binary to {path}")
 
 def quantize_per_row_int4_with_scale_append(matrix):
     matrix = np.array(matrix, dtype=np.float32)

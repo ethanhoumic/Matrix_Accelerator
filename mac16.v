@@ -80,7 +80,7 @@ module mac_16 (
                 end
                 else begin
                     if (calc_int8 == 31) begin
-                        if (block_counter == 7) begin
+                        if (block_counter == 31) begin
                             state <= DONE;
                             calc_int8 <= 0;
                             calc_done <= 1; // Signal that calculation is done
@@ -124,7 +124,7 @@ module mac_16 (
                 end
                 else begin
                     if (calc_int4 == 15) begin
-                        if (block_counter == 3) begin
+                        if (block_counter == 15) begin
                             state <= DONE;
                             calc_int4 <= 0;
                             calc_done <= 1; // Signal that calculation is done
