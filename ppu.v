@@ -267,32 +267,48 @@ endmodule
 `define SCALING_MODULE
 
 module scaling_module (
-    input  wire [7:0]   scale,                 // scale in FP8 (E4M3)
+    input  wire [7:0]   scale_a,                 // scale in FP8 (E4M3)
+    input  wire [7:0]   scale_w,
     input  wire [383:0] partial_sum,           // 16 * 24-bit input
     output wire [639:0] scaled_sum             // 16 * 40-bit output
 );
 
     // FP8 decoding
-    wire        sign = scale[7];
-    wire [3:0]  exp  = scale[6:3];           // exponent with bias 7
-    wire [2:0]  mant = scale[2:0];           // mantissa (fractional)
+    wire        sign_a = scale_a[7];
+    wire [3:0]  exp_a  = scale_a[6:3];           // exponent with bias 7
+    wire [2:0]  mant_a = scale_a[2:0];           // mantissa (fractional)
 
     // Convert FP8 to fixed-point Q8.8
-    wire [15:0] scale_fixed;
-    wire [7:0] frac_part = {mant, 5'b0};        // mantissa in Q8.8
-    wire [15:0] base = 16'h0100 + frac_part;     // 1 + mant in Q8.8 = 0x0100 + frac_part
-    wire [4:0]  shift = (exp >= 7) ? (exp - 7) : (7 - exp);
+    wire [15:0] scale_fixed_a;
+    wire [7:0]  frac_part_a = {mant_a, 5'b0};        // mantissa in Q8.8
+    wire [15:0] base_a = 16'h0100 + frac_part_a;     // 1 + mant in Q8.8 = 0x0100 + frac_part
+    wire [4:0]  shift_a = (exp_a >= 7) ? (exp_a - 7) : (7 - exp_a);
 
-    wire [15:0] scaled_val_temp;
-    assign scaled_val_temp = (exp >= 7) ? (base << shift) : (base >> shift);
-    assign scale_fixed = sign ? (~scaled_val_temp + 1'b1) : scaled_val_temp;  // signed value
+    wire [15:0] scaled_val_temp_a;
+    assign scaled_val_temp_a = (exp_a >= 7) ? (base_a << shift_a) : (base_a >> shift_a);
+    assign scale_fixed_a = sign_a ? (~scaled_val_temp_a + 1'b1) : scaled_val_temp_a;  // signed value
+
+    // FP8 decoding
+    wire        sign_w = scale_w[7];
+    wire [3:0]  exp_w  = scale_w[6:3];           // exponent with bias 7
+    wire [2:0]  mant_w = scale_w[2:0];           // mantissa (fractional)
+
+    // Convert FP8 to fixed-point Q8.8
+    wire [15:0] scale_fixed_w;
+    wire [7:0]  frac_part_w = {mant_w, 5'b0};        // mantissa in Q8.8
+    wire [15:0] base_w = 16'h0100 + frac_part_w;     // 1 + mant in Q8.8 = 0x0100 + frac_part
+    wire [4:0]  shift_w = (exp_w >= 7) ? (exp_w - 7) : (7 - exp_w);
+
+    wire [15:0] scaled_val_temp_w;
+    assign scaled_val_temp_w = (exp_w >= 7) ? (base_w << shift_w) : (base_w >> shift_w);
+    assign scale_fixed_w = sign_w ? (~scaled_val_temp_w + 1'b1) : scaled_val_temp_w;  // signed value
 
     // Scale partial_sum
     genvar j;
     generate
         for (j = 0; j < 16; j = j + 1) begin: SCALING
             wire signed [23:0] in_val = partial_sum[(j * 24) +: 24];
-            wire signed [39:0] product = ((in_val * $signed(scale_fixed) >>> 8) * $signed(scale_fixed)) >>> 8;
+            wire signed [39:0] product = ((in_val * $signed(scale_fixed_a) >>> 8) * $signed(scale_fixed_w)) >>> 8;
             assign scaled_sum[(j * 40) +: 40] = product;
         end
     endgenerate
