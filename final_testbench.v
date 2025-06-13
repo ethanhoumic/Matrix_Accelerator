@@ -1,5 +1,6 @@
 `timescale 1ns/1ps
-`include "matrix_accelerator.v"
+`include "ppu.v"
+`include "mac16.v"
 
 // Define file paths for patterns and scales
 
@@ -19,14 +20,13 @@
 `define B_SCALE_INT4 "./data_files/B_int4_fp8.txt"
 `define B_SCALE_VSQ "./data_files/B_vsq_fp8.txt"
 
+`define BIAS_INT8 "./data_files/bias_int8.txt"
+`define BIAS_INT4 "./data_files/bias_int4.txt"
+
 `define PATTERN_C "./data_files/C_correct.txt"
 `define PATTERN_C_SOFTMAX "./data_files/C_softmax.txt"
 `define CMD "./data_files/cmd.txt"
 
-`define HEIGHT 32
-`define VL 16
-`define AD 16
-`define ACC_COUNT 4
 
 module A_tile (
     input wire clk,
@@ -320,10 +320,12 @@ module tb ;
     reg buff_2;
     reg [1:0] mode;          // 00: int8, 01: int4, 10: vsq
     reg [8:0] cycle_count;
-    reg [5:0] addr_count;
+    reg [7:0] addr_count;
     reg output_en;
+    reg terminate;
+    reg [8:0] output_addr;
 
-    // --------------------Memory for A and B vectors------------------------------
+    // --------------------Memory for A and B matrices------------------------------
 
     reg [7:0] a_mem [0:4224];  // 65 * 65
     reg [7:0] b_mem [0:4224];  // 65 * 65
@@ -334,7 +336,7 @@ module tb ;
     wire [4223:0] a_vec_wire;    // tiling to buff
     wire [263:0]  b_vec_wire;    // tiling to buff
 
-    // --------------------Buffers for A and B vectors------------------------------
+    // --------------------Buffers for input datas--------------------------------------------
 
     reg [263:0] a_buffer_0  [0:127];
     reg [263:0] a_buffer_1  [0:127];
@@ -354,6 +356,7 @@ module tb ;
     reg [263:0] a_buffer_15 [0:127];
     reg [3:0]   a_addr;
     reg [3:0]   w_a_addr;
+    reg [1:0]   a_addr_count;
     
 
     reg [263:0] b_buffer [0:2047];
@@ -363,10 +366,30 @@ module tb ;
     wire [4223:0] a_from_buff;   // buff to mac
     wire [263:0]  b_from_buff;   // buff to mac
 
+    reg [7:0] scale_a;
+    reg [7:0] scale_w;
+
+    reg  [7:0] bias_mem [0:63];
+    reg  [5:0] bias_addr;
+    wire [7:0] bias;
+    assign bias = (output_en) ? bias_mem[bias_addr] : 0;
+
     // --------------------Buffers for output------------------------------
 
-    reg [383:0] output_buffer [0:127];
-    reg [8:0]   output_addr;
+    reg [511:0] q_data_mem [0:63];
+    reg [511:0] s_data_mem [0:63];
+    reg [3:0] q_addr;
+    reg [3:0] q_addr_count;
+    reg [3:0] s_addr;
+    reg [3:0] s_addr_count;
+
+    wire [127:0] q_data_wire;
+    wire [127:0] s_data_wire;
+    wire q_done_wire;
+    wire s_done_wire;
+
+    reg q_display_en;
+    reg s_display_en;
 
     // --------------------Data wires--------------------------------------
     wire mac_start;
@@ -382,7 +405,7 @@ module tb ;
 
     // --------------------Integers-------------------------------------------
 
-    integer i, j, cmd_file;
+    integer i, j, cmd_file, scale_a_file, scale_w_file;
 
     // --------------------Assignments-------------------------------------------
 
@@ -450,6 +473,21 @@ module tb ;
         .done_wire(acc_done_wire)
     );
 
+    ppu ppu_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .mode(mode),
+        .partial_sum(to_ppu_wire),
+        .scale_a(scale_a),
+        .scale_w(scale_w),
+        .bias(bias),
+        .valid(output_en),
+        .quantized_data_wire(q_data_wire),
+        .output_data(s_data_wire),
+        .q_done(q_done_wire),
+        .s_done(s_done_wire)
+    );
+
     always #5 clk = ~clk; // 10 ns clock period
 
     // --------------------Testbench Initialization--------------------------------
@@ -470,9 +508,18 @@ module tb ;
         buff_2 = 0;
         mode = 0;
         start = 0;
-        output_addr = 0;
         addr_count = 0;
         output_en = 0;
+        q_addr = 0;
+        s_addr = 0;
+        a_addr_count = 0;
+        q_addr_count = 0;
+        s_addr_count = 0;
+        bias_addr = 0;
+        terminate = 0;
+        output_addr = 0;
+        q_display_en = 0;
+        s_display_en = 0;
 
         //-------------------- Initialize memory and buffers ----------------------------
 
@@ -503,10 +550,6 @@ module tb ;
             b_buffer[i] = 0;
         end
 
-        for (i = 0; i < 128; i = i + 1) begin
-            output_buffer[i] = 0;
-        end
-
         // ----------------------Load command file and datas-----------------------------
 
         #10;
@@ -526,31 +569,102 @@ module tb ;
             $finish;
         end
 
+        scale_a_file = $fopen(`A_SCALE_VSQ, "r");
+        if (scale_a_file) begin
+            $fscanf(scale_a_file, "%b", scale_a);
+            $display("Scale a is: %h", scale_a);
+            $fclose(scale_a_file);
+        end
+        else begin
+            $display("Error opening scale a file.");
+            $finish;
+        end
+
+        scale_w_file = $fopen(`B_SCALE_VSQ, "r");
+        if (scale_w_file) begin
+            $fscanf(scale_w_file, "%b", scale_w);
+            $display("Scale w is: %h", scale_w);
+            $fclose(scale_w_file);
+        end
+        else begin
+            $display("Error opening scale w file.");
+            $finish;
+        end
+
         case (mode) 
             2'b00: begin
                 $readmemb(`PATTERN_A_INT8, a_mem);
                 $readmemb(`PATTERN_B_INT8, b_mem);
+                $readmemb(`BIAS_INT8, bias_mem);
             end
             2'b01: begin
                 $readmemb(`PATTERN_A_INT4, a_mem);
                 $readmemb(`PATTERN_B_INT4, b_mem);
+                $readmemb(`BIAS_INT4, bias_mem);
             end
             2'b10: begin
                 $readmemb(`PATTERN_A_VSQ, a_mem);
                 $readmemb(`PATTERN_B_VSQ, b_mem);
+                $readmemb(`BIAS_INT4, bias_mem);
             end
         endcase
 
-        #5000;
+        #45000;
 
-        // $finish;
+        $finish;
 
 
     end
 
     always @(posedge clk or negedge rst_n) begin
 
-        if (stall) output_en <= 1;
+        if (q_addr == 15 && s_addr == 15 && q_addr_count == 15 && s_addr_count == 15 && s_display_en) begin
+            $display("====================== Simulation ends ==============================");
+            $finish;
+        end
+        if (q_done_wire) begin
+            if (q_addr == 15) begin
+                if (q_addr_count == 15 && !q_display_en) begin
+                    $display("============================ Quantization data done ==============================");
+                    for (i = 0; i < 64; i = i + 1) begin
+                        $display("Quantized data at row %d: %h", i, q_data_mem[i]);
+                    end
+                    q_display_en <= 1;
+                end
+                else begin
+                    q_addr <= 0;
+                    q_addr_count <= q_addr_count + 1;
+                    q_data_mem[(q_addr_count / 4) * 16 + q_addr][(q_addr_count % 4) * 128 +: 128] <= q_data_wire;
+                end
+            end
+            else begin
+                q_data_mem[(q_addr_count / 4) * 16 + q_addr][(q_addr_count % 4) * 128 +: 128] <= q_data_wire;
+                q_addr <= q_addr + 1;
+            end
+        end
+
+        if (s_done_wire) begin
+            if (s_addr == 15) begin
+                if (s_addr_count == 15 && !s_display_en) begin
+                    $display("======================= Softmax data done ==========================");
+                    for (i = 0; i < 64; i = i + 1) begin
+                        $display("Softmax data at row %d: %h", i, s_data_mem[i]);
+                    end
+                    s_display_en <= 1;
+                end
+                else begin
+                    s_addr <= 0;
+                    s_addr_count <= s_addr_count + 1;
+                    s_data_mem[(s_addr_count / 4) * 16 + s_addr][(s_addr_count % 4) * 128 +: 128] <= s_data_wire;
+                end
+            end
+            else begin
+                s_data_mem[(s_addr_count / 4) * 16 + s_addr][(s_addr_count % 4) * 128 +: 128] <= s_data_wire;
+                s_addr <= s_addr + 1;
+            end
+        end
+
+        if (stall && !terminate) output_en <= 1;
         else output_en <= 0;
         if (!rst_n) begin
             for (i = 0; i < 4225; i = i + 1) begin
@@ -561,25 +675,29 @@ module tb ;
             b_addr <= 0;
             cycle_count <= 0;
         end
-
         else if (output_en) begin
-            output_buffer[output_addr] <= to_ppu_wire;
+            bias_addr <= bias_addr + 1;
+            // output_buffer[output_addr] <= to_ppu_wire;
             if (mode == 0) begin
-                if (output_addr == 128) begin
-                    $display("Output buffer filled.");
-                    for (i = 0; i < 128; i = i + 1) begin
-                        $display("Output %d: %h", i, output_buffer[i]);
-                    end
-                    $finish;
+                if (output_addr == 256) begin
+                    $display("============================ All mac calculations done =================================");
+                    output_en <= 0;
+                    terminate <= 1;
+                    // for (i = 0; i < 256; i = i + 1) begin
+                    //     $display("Output %d: %h", i, output_buffer[i]);
+                    // end
+                    // $finish;
                 end
             end
             else begin
-                if (output_addr == 64) begin
-                    $display("Output buffer filled.");
-                    for (i = 0; i < 64; i = i + 1) begin
-                        $display("Output %d: %h", i, output_buffer[i]);
-                    end
-                    $finish;
+                if (output_addr == 256) begin
+                    $display("============================ All mac calculations done =================================");
+                    output_en <= 0;
+                    terminate <= 1;
+                    // for (i = 0; i < 128; i = i + 1) begin
+                    //     $display("Output %d: %h", i, output_buffer[i]);
+                    // end
+                    // $finish;
                 end
             end
             output_addr <= output_addr + 1;
@@ -615,6 +733,7 @@ module tb ;
             // for (i = 0; i < 70; i = i + 1) begin
             //     $display("b_buffer[%d] = %h", i, b_buffer[i]);
             // end
+            // $finish;
 
             //--------------------- Debugging for input tiling part-----------------------------------
 
@@ -622,17 +741,34 @@ module tb ;
                 addr_count <= 0;
                 w_a_addr <= w_a_addr;
                 w_b_addr <= w_b_addr;
-                $display("Stall condition met, waiting for next cycle.");
+                // $display("--------------------------------------------------------------------------------------");
+                // $display("---------------------Stall condition met, waiting for next cycle----------------------");
+                // $display("--------------------------------------------------------------------------------------");
+
             end
 
             else begin
                 addr_count <= addr_count + 1;
-                if ((addr_count + 1) % 16 == 0) w_a_addr <= w_a_addr + 1;
-                else w_a_addr <= w_a_addr;
-                w_b_addr <= w_b_addr + 1;
-                $display("Processing next data: a_addr = %d, b_addr = %d", w_a_addr, w_b_addr);
-                $display("a_vec_wire = %h", a_from_buff);
-                $display("b_vec_wire = %h", b_from_buff);
+                if ((addr_count + 1) % 16 == 0) begin
+                    if ((addr_count + 1) % 32 == 0 && a_addr_count == 3) begin
+                        w_a_addr <= w_a_addr + 1;
+                        a_addr_count <= 0;
+                    end 
+                    else if ((addr_count + 1) % 32 == 0 && a_addr_count != 3) begin
+                        w_a_addr = w_a_addr - 1;
+                        a_addr_count <= a_addr_count + 1;
+                    end
+                    else begin
+                        w_a_addr <= w_a_addr + 1;
+                    end
+                end
+                else begin
+                    w_a_addr <= w_a_addr;
+                end 
+                w_b_addr <= (w_b_addr + 1) % 64;
+                // $display("Processing next data: a_addr = %d, b_addr = %d", w_a_addr, w_b_addr);
+                // $display("a_vec_wire = %h", a_from_buff);
+                // $display("b_vec_wire = %h", b_from_buff);
             end
 
         end

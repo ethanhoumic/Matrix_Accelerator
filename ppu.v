@@ -5,65 +5,72 @@
 module ppu (
     input wire clk,
     input wire rst_n,
+    input wire [1:0] mode,
     input wire [383:0] partial_sum,
-    input wire [7:0] scale,
+    input wire [7:0] scale_a,
+    input wire [7:0] scale_w,
     input wire [7:0] bias,
     input wire valid,
-    output wire [639:0] scaled_sum_wire,
-    output wire [15:0] vec_max_wire,
-    output wire [15:0] reciprocal_wire,
-    output wire [135:0] quantized_data_wire,
+    output wire [127:0] quantized_data_wire,
     output wire [127:0] output_data,
-    output wire done_wire
+    output wire q_done,
+    output wire s_done
 );
     integer i;
-    reg     read_en;
-    wire    read_en_wire = read_en;
-    reg     write_en;
-    wire    write_en_wire = write_en;
-    reg     reset_addr;
-    wire    reset_addr_wire = reset_addr;
-    reg     [295:0] from_latch_array;
-    reg     [3:0] counter;
-    reg     latch_done;
+    wire    [639:0] scaled_sum_wire;
+    wire    [255:0] from_latch_array;
     wire    [639:0] biased_sum;
     wire    [639:0] relu_sum;
-    wire    [295:0] truncated_sum;
+    wire    [255:0] truncated_sum;
     wire            reciprocal_done_wire;
-    genvar  j;
+    wire    [15:0]  vec_max_wire;
+    wire    [15:0]  reciprocal_wire;
+    assign done_wire = (q_done && s_done);
 
     // scaling module
-    scaling_module scaling_module(
-        .scale(scale),
+    scaling_module scaling_module_inst(
+        .scale_a(scale_a),
+        .scale_w(scale_w),
         .partial_sum(partial_sum),
         .scaled_sum(scaled_sum_wire)
     );
 
     // biasing
     
-    biasing_module biasing_module(
+    biasing_module biasing_module_inst(
         .bias(bias),
         .scaled_sum(scaled_sum_wire),
         .biased_sum(biased_sum)
     );
 
     // relu
-    relu_module relu_module(
+    relu_module relu_module_inst(
         .biased_sum(biased_sum),
         .relu_sum(relu_sum)
     );
 
     // truncation
-    truncation_module truncation_module(
+    truncation_module truncation_module_inst(
         .relu_sum(relu_sum),
         .truncated_sum(truncated_sum)
     );
 
-    // reciprocal
-    reciprocal_module reciprocal_module(
+    // vector max
+    max_module max_module_inst(
         .clk(clk),
         .rst_n(rst_n),
-        .latch_done(latch_done),
+        .from_trunc(truncated_sum),
+        .input_valid(valid),
+        .output_en(latch_full),
+        .vec_max_wire(vec_max_wire)
+    );
+
+    // reciprocal
+    reciprocal_module reciprocal_module_inst(
+        .clk(clk),
+        .rst_n(rst_n),
+        .latch_done(latch_full),
+        .mode(mode),
         .vec_max_wire(vec_max_wire),
         .reciprocal_wire(reciprocal_wire),
         .reciprocal_done_wire(reciprocal_done_wire)
@@ -73,143 +80,32 @@ module ppu (
     latch_array latch_array_inst (
         .clk(clk),
         .rst_n(rst_n),
-        .reset_addr(reset_addr_wire),
-        .write_en(write_en_wire),
+        .write_en(valid),
         .write_data(truncated_sum),
-        .read_en(read_en_wire),
+        .full(latch_full),
         .read_data(from_latch_array)
     );
 
-    reg [1:0] state;
-    localparam IDLE = 2'b00;
-    localparam INPUT = 2'b01;
-    localparam OUTPUT = 2'b10;
-    // reading and writing vsq buffer
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            state <= IDLE;
-            counter <= 4'b0000;
-            read_en <= 1'b0;
-            latch_done <= 1'b0;
-            write_en <= 1'b0;
-            reset_addr <= 1'b0;
-        end
-        else begin
-            case (state)
-                IDLE: begin
-                    if (reciprocal_done_wire) begin 
-                        state <= OUTPUT;
-                        read_en <= 1'b1;
-                        latch_done <= 1'b0;
-                        counter <= 0;
-                        reset_addr <= 1'b1;
-                    end 
-                    else if (valid) begin
-                        state <= INPUT;
-                        write_en <= 1'b1;
-                    end
-                    else begin
-                        state <= IDLE;
-                        read_en <= 1'b0;
-                        latch_done <= 1'b0;
-                        counter <= 4'b0000;
-                    end
-                end
-                INPUT: begin
-                    if (counter == 4'b1111) begin
-                        state <= OUTPUT;
-                        read_en <= 1'b1;
-                        write_en <= 1'b0;
-                        latch_done <= 1'b0;
-                        counter <= 0;
-                    end
-                    else begin
-                        counter <= counter + 1;
-                    end
-                end
-                OUTPUT: begin
-                    if (counter == 4'b1111) begin
-                        state <= IDLE;
-                        counter <= 0;
-                        latch_done <= 1;
-                        read_en <= 0;
-                    end
-                    else begin
-                        counter <= counter + 1;
-                        reset_addr <= 1'b0;
-                    end
-                end
-            endcase
-        end
-    end
-
-    // vector max
-    max_module max_module(
+    quantization_module quantization_module(
         .clk(clk),
         .rst_n(rst_n),
-        .latch_en(read_en),
-        .from_relu(relu_sum),
+        .mode(mode),
         .from_latch_array(from_latch_array),
-        .vec_max_wire(vec_max_wire)
+        .reciprocal_wire(reciprocal_wire),
+        .q_en(latch_full),
+        .q_out(quantized_data_wire),
+        .q_done(q_done)
     );
-
-    // quantize and round
-    reg [135:0] quantized_data;
-    reg [17:0] temp_val [0:15];
-    reg [3:0] buffer;
-    reg quantization_done;
-    wire quantization_done_wire = quantization_done;
-    assign quantized_data_wire = quantized_data;
     
-    // Simplified quantization logic
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (i = 0; i < 17; i = i + 1) begin
-                quantized_data[i*8 +: 8] <= 8'b0;
-            end
-            for (i = 0; i < 16; i = i + 1) begin
-                temp_val[i] <= 0;
-            end
-            quantization_done <= 1'b0;
-            buffer <= 1'b0;
-        end
-        else if (reciprocal_done_wire && reciprocal_wire != 0) begin
-            if (buffer == 3) begin
-                for (i = 0; i < 16; i = i + 1) begin
-                    if (temp_val[i] > 255) begin
-                        quantized_data[i*8 +: 8] <= 8'd255;
-                    end
-                    else begin
-                        quantized_data[i*8 +: 8] <= temp_val[i][7:0];
-                    end
-                end
-                quantized_data[135:128] <= 8'd255;
-                quantization_done <= 1'b1;
-                buffer <= 0;
-            end
-            else if (buffer == 2) begin
-                for (i = 0; i < 16; i = i + 1) begin
-                    temp_val[i] <= ((from_latch_array[i*16 +: 16] * reciprocal_wire) >> 6);
-                end
-                buffer <= buffer + 1;
-            end
-            else begin
-                buffer <= buffer + 1;
-            end
-        end
-        else begin
-            quantization_done <= 1'b0;
-        end
-    end
 
     approx_softmax_module approx_softmax_module(
         .clk(clk),
         .rst_n(rst_n),
-        .quantized_data_wire(quantized_data_wire[127:0]),  // high 8 bits are max value
+        .quantized_data_wire(quantized_data_wire),  // high 8 bits are max value
         .vec_max_wire(vec_max_wire),
-        .softmax_en(quantization_done_wire),
+        .softmax_en(q_done),
         .approx_softmax_wire(output_data),
-        .approx_softmax_done_wire(done_wire)
+        .approx_softmax_done_wire(s_done)
     );
 
 endmodule
@@ -220,37 +116,41 @@ endmodule
 `define LATCH_ARRAY
 
 module latch_array (
-    input  wire clk,
-    input  wire rst_n,
-    input  wire reset_addr,
-    input  wire write_en,
-    input  wire [295:0]  write_data,
-    input  wire read_en,
-    output wire [295:0]  read_data
+    input  wire          clk,
+    input  wire          rst_n,
+    input  wire          write_en,
+    input  wire [255:0]  write_data,
+    output wire          full,
+    output wire [255:0]  read_data
 );
 
     integer i;
-    reg [295:0] latch_array [47:0];
-    reg [5:0] write_addr;
-    reg [5:0] read_addr;
+    reg [255:0] latch_array [0:127];
+    reg [8:0] write_addr;
+    reg [6:0] read_addr;
+    reg full_reg;
+    assign full = full_reg;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             read_addr <= 6'b0;
             write_addr <= 6'b0;
-            for (i = 0; i < 48; i = i + 1)
-                latch_array[i] <= 296'b0;
+            for (i = 0; i < 127; i = i + 1) begin
+                latch_array[i] <= 256'b0;
+            end
+            full_reg <= 0;
         end 
-        else if (reset_addr) begin
-            read_addr <= 6'b0;
-            write_addr <= 6'b0;
-        end
         else if (write_en) begin
-            latch_array[write_addr] <= write_data;
-            write_addr <= (write_addr == 47) ? 0 : write_addr + 1;
+            if (write_addr <= 255) begin
+                latch_array[write_addr] <= write_data;
+                write_addr <= write_addr + 1;
+            end
+            else begin
+                full_reg <= 1;
+            end
         end
-        else if (read_en) begin
-            read_addr <= (read_addr == 47) ? 0 : read_addr + 1;
+        else if (full) begin
+            read_addr <= (read_addr == 255) ? 0 : read_addr + 1;
         end
         else begin
             read_addr <= read_addr;
@@ -258,7 +158,7 @@ module latch_array (
         end
     end
 
-    assign read_data = (read_en) ? latch_array[read_addr] : 296'b0;
+    assign read_data = (full) ? latch_array[read_addr] : 256'b0;
 
 endmodule
 `endif
@@ -267,7 +167,7 @@ endmodule
 `define SCALING_MODULE
 
 module scaling_module (
-    input  wire [7:0]   scale_a,                 // scale in FP8 (E4M3)
+    input  wire [7:0]   scale_a,               // scale in FP8 (E4M3)
     input  wire [7:0]   scale_w,
     input  wire [383:0] partial_sum,           // 16 * 24-bit input
     output wire [639:0] scaled_sum             // 16 * 40-bit output
@@ -330,7 +230,7 @@ module biasing_module (
     generate
         for (j = 0; j < 16; j = j + 1) begin: BIASING
             wire [39:0] in_bias = scaled_sum[(j * 40) +: 40];
-            assign biased_sum[(j * 40) +: 40] = in_bias + {32'b0, bias};
+            assign biased_sum[(j * 40) +: 40] = in_bias + {16'b0, bias, 16'b0};
         end
     endgenerate
     
@@ -362,15 +262,14 @@ endmodule
 
 module truncation_module (
     input  wire [639:0] relu_sum,
-    output wire [295:0] truncated_sum
+    output wire [255:0] truncated_sum
 );
 
     genvar j;
     generate
         for (j = 0; j < 16; j = j + 1) begin: TRUNCATION
-            assign truncated_sum[(j * 16) +: 16] = relu_sum[(j * 40) + 39 -: 16]; // Truncate to high 16 bits
+            assign truncated_sum[(j * 16) +: 16] = relu_sum[(j * 40) + 31 -: 16]; // Truncate to high 16 bits
         end
-        assign truncated_sum[295:256] = 40'b0; // Padding to 296 bits
     endgenerate
 endmodule
 
@@ -382,28 +281,47 @@ endmodule
 module max_module(
     input  wire         clk,
     input  wire         rst_n,
-    input  wire         latch_en,
-    input  wire [639:0] from_relu,
-    input  wire [295:0] from_latch_array,
+    input  wire [255:0] from_trunc,
+    input  wire         input_valid,
+    input  wire         output_en,
     output wire [15:0]  vec_max_wire
 );
 
-    reg [15:0] vec_max;
+    reg signed [15:0] vec_max [0:63];
+    reg signed [15:0] temp_max;
+    reg [5:0] write_addr;
+    reg [5:0] read_addr;
+    reg buffer;
     integer i;
 
-    assign vec_max_wire = vec_max;
+    assign vec_max_wire = (output_en) ? vec_max[read_addr] : 0;
 
     always@(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            vec_max <= 0;
+            for (i = 0; i < 63; i = i + 1) begin
+                vec_max[i] <= 0;
+            end
+            write_addr <= 0;
+            read_addr <= 0;
+            buffer <= 0;
         end
-        // else if ()
-        else if (latch_en) begin
-            for (i = 0; i < 16; i = i + 1) begin
-                if (from_latch_array[(i * 16) +: 16] > vec_max) begin
-                    vec_max <= from_latch_array[(i * 16) +: 16];
+        else if (input_valid) begin
+            if (buffer) begin
+                vec_max[write_addr] <= temp_max;
+                write_addr <= write_addr + 1;
+            end
+            else begin
+                buffer <= 1;
+            end
+            temp_max = from_trunc[15:0];
+            for (i = 1; i < 16; i = i + 1) begin
+                if ($signed(from_trunc[i * 16 +: 16]) > temp_max) begin
+                    temp_max = from_trunc[i * 16 +:16];
                 end
             end
+        end
+        else if (output_en) begin
+            read_addr <= read_addr + 1;
         end
         else begin
             vec_max <= vec_max;
@@ -421,12 +339,13 @@ module reciprocal_module(
     input wire clk,
     input wire rst_n,
     input wire latch_done,
+    input wire [1:0] mode,
     input wire [15:0] vec_max_wire,
     output wire [15:0] reciprocal_wire,
     output wire reciprocal_done_wire
 );
 
-    reg [39:0] reciprocal;
+    reg [15:0] reciprocal;
     reg reciprocal_done;
     assign reciprocal_wire = reciprocal;
     assign reciprocal_done_wire = reciprocal_done;
@@ -437,7 +356,12 @@ module reciprocal_module(
             reciprocal_done <= 1'b0;
         end
         else if (latch_done) begin
-            reciprocal <= (vec_max_wire == 0) ? 18'hffff : (255 << 6)/ vec_max_wire;
+            if (mode == 0) begin
+                reciprocal <= (vec_max_wire == 0) ? 16'hffff : (127 << 8)/ vec_max_wire;
+            end
+            else begin
+                reciprocal <= (vec_max_wire == 0) ? 16'hffff : (7 << 8)/ vec_max_wire;
+            end
             reciprocal_done <= 1'b1;
         end
         else begin
@@ -457,7 +381,7 @@ module approx_softmax_module (
     input  wire         clk,
     input  wire         rst_n,
     input  wire [127:0] quantized_data_wire,
-    input  wire [15:0]   vec_max_wire,
+    input  wire [15:0]  vec_max_wire,
     input  wire         softmax_en,
     output wire [127:0] approx_softmax_wire,
     output wire         approx_softmax_done_wire
@@ -540,4 +464,139 @@ module approx_softmax_module (
     
 endmodule
 
+module quantization_module (
+    input  wire         clk,
+    input  wire         rst_n,
+    input  wire [1:0]   mode,
+    input  wire [255:0] from_latch_array,
+    input  wire [15:0]  reciprocal_wire,
+    input  wire         q_en,
+    output wire [127:0] q_out,
+    output wire         q_done
+);
+
+    integer i;
+    reg [127:0] quantized_data;
+    reg signed [15:0] temp_val [0:15];
+    reg quantization_done;
+    assign q_done = quantization_done;
+    assign q_out = (q_done) ? quantized_data : 0;
+    
+    always @(*) begin
+        if (q_en && reciprocal_wire != 0) begin
+            for (i = 0; i < 16; i = i + 1) begin
+                temp_val[i] <= (($signed(from_latch_array[i*16 +: 16]) * reciprocal_wire) >> 8);
+            end
+        end
+
+    end
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            quantized_data <= 0;
+            for (i = 0; i < 16; i = i + 1) begin
+                temp_val[i] <= 0;
+            end
+            quantization_done <= 0;
+        end
+        else if (q_en && reciprocal_wire != 0) begin
+            if (mode == 0) begin
+                for (i = 0; i < 16; i = i + 1) begin
+                    if (temp_val[i] > 127) begin
+                        quantized_data[i * 8 +: 8] <= 8'd127;
+                    end
+                    else if (temp_val[i] < -128) begin
+                        quantized_data[i * 8 +: 8] <= 8'h80;
+                    end
+                    else begin
+                        quantized_data[i * 8 +: 8] <= temp_val[i][7:0];
+                    end
+                end
+            end
+            else begin
+                for (i = 0; i < 16; i = i + 1) begin
+                    if (temp_val[i] > 7) begin
+                        quantized_data[i * 4 +: 4] <= 4'd7;
+                    end
+                    else if (temp_val[i] < -8) begin
+                        quantized_data[i * 4 +: 4] <= 4'h8;
+                    end
+                    else begin
+                        quantized_data[i * 4 +: 4] <= temp_val[i][3:0];
+                    end
+                    quantized_data[i * 4 + 4 +: 4] <= 4'b0;
+                end
+            end
+            quantization_done <= 1;
+        end
+        else begin
+            quantization_done <= 0;
+            quantized_data <= 0;
+        end
+    end
+
+endmodule
+
 `endif
+    // reg [1:0] state;
+    // localparam IDLE = 2'b00;
+    // localparam INPUT = 2'b01;
+    // localparam OUTPUT = 2'b10;
+    // reading and writing vsq buffer
+    // always @(posedge clk or negedge rst_n) begin
+    //     if (!rst_n) begin
+    //         state <= IDLE;
+    //         counter <= 4'b0000;
+    //         read_en <= 1'b0;
+    //         latch_done <= 1'b0;
+    //         write_en <= 1'b0;
+    //         reset_addr <= 1'b0;
+    //     end
+    //     else begin
+    //         case (state)
+    //             IDLE: begin
+    //                 if (reciprocal_done_wire) begin 
+    //                     state <= OUTPUT;
+    //                     read_en <= 1'b1;
+    //                     latch_done <= 1'b0;
+    //                     counter <= 0;
+    //                     reset_addr <= 1'b1;
+    //                 end 
+    //                 else if (valid) begin
+    //                     state <= INPUT;
+    //                     write_en <= 1'b1;
+    //                 end
+    //                 else begin
+    //                     state <= IDLE;
+    //                     read_en <= 1'b0;
+    //                     latch_done <= 1'b0;
+    //                     counter <= 4'b0000;
+    //                 end
+    //             end
+    //             INPUT: begin
+    //                 if (counter == 4'b1111) begin
+    //                     state <= OUTPUT;
+    //                     read_en <= 1'b1;
+    //                     write_en <= 1'b0;
+    //                     latch_done <= 1'b0;
+    //                     counter <= 0;
+    //                 end
+    //                 else begin
+    //                     counter <= counter + 1;
+    //                 end
+    //             end
+    //             OUTPUT: begin
+    //                 if (counter == 4'b1111) begin
+    //                     state <= IDLE;
+    //                     counter <= 0;
+    //                     latch_done <= 1;
+    //                     read_en <= 0;
+    //                 end
+    //                 else begin
+    //                     counter <= counter + 1;
+    //                     reset_addr <= 1'b0;
+    //                 end
+    //             end
+    //         endcase
+    //     end
+    // end
