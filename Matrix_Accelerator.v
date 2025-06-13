@@ -12,6 +12,7 @@ module matrix_accelerator #(
     input  wire          rst_n,
     input  wire [4223:0] a_vec,
     input  wire [263:0]  b_vec,
+    input  wire [1:0]    mode,
     input  wire          is_int8_mode,
     input  wire          is_int4_mode,
     input  wire          is_vsq,
@@ -23,9 +24,10 @@ module matrix_accelerator #(
     output wire [639:0]  scaled_sum_wire,
     output wire [15:0]   vec_max_wire,
     output wire [15:0]   reciprocal_wire,
-    output wire [135:0]  quantized_data_wire,
+    output wire [127:0]  quantized_data_wire,
     output wire [127:0]  softmax_out,
-    output wire          done_wire
+    output wire          q_done_wire,
+    output wire          s_done_wire
 );
 
     wire         mac_done_wire;
@@ -67,17 +69,16 @@ module matrix_accelerator #(
     ppu ppu_inst (
         .clk(clk),
         .rst_n(rst_n),
+        .mode(mode),
         .partial_sum(to_ppu_wire),
         .scale_a(scale_a),
         .scale_w(scale_w),
         .bias(bias),
         .valid(ppu && valid_ppu),
-        .scaled_sum_wire(scaled_sum_wire),
-        .vec_max_wire(vec_max_wire),
-        .reciprocal_wire(reciprocal_wire),
         .quantized_data_wire(quantized_data_wire),
         .output_data(softmax_out),
-        .done_wire(done_wire)
+        .q_done(q_done_wire),
+        .s_done(s_done_wire)
     );
 
     
